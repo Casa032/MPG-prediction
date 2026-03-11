@@ -1,0 +1,461 @@
+correction tunnel
+
+@app.callback(
+    Output("resultat", "children"),
+    Input("ca_calculer", "n_clicks"),
+    State("ca_ajouter_etape", "n_clicks"),
+    State({'type': 'ca_ajouter_etape_critere', 'index': ALL}, "n_clicks"),
+    State({'type': 'ca_etape_mod','index': ALL}, "value"),
+    State({'type': 'ca_etape_var','index': ALL}, "value"),
+    State({'type': 'ca_etape_duree','index': ALL}, "value"),
+    State({'type': 'ca_eu_lieu','index': ALL}, "value"),
+    State({'type': 'ca_eu_lieu2','index': ALL}, "value"),
+    State('ca_periode', 'start_date'),
+    State('ca_periode', 'end_date'),
+
+    State({'type': 'ca_etape_mod1_','index': ALL}, "value"),
+    State({'type': 'ca_etape_var1_','index': ALL}, "value"),
+    State({'type': 'ca_etape_op1_','index': ALL}, "value"),
+
+    State({'type': 'ca_etape_mod2_','index': ALL}, "value"),
+    State({'type': 'ca_etape_var2_','index': ALL}, "value"),
+    State({'type': 'ca_etape_op2_','index': ALL}, "value"),
+
+    State({'type': 'ca_etape_mod3_','index': ALL}, "value"),
+    State({'type': 'ca_etape_var3_','index': ALL}, "value"),
+    State({'type': 'ca_etape_op3_','index': ALL}, "value"),
+
+    State({'type': 'ca_etape_mod4_','index': ALL}, "value"),
+    State({'type': 'ca_etape_var4_','index': ALL}, "value"),
+    State({'type': 'ca_etape_op4_','index': ALL}, "value"),
+
+    State({'type': 'ca_etape_mod5_','index': ALL}, "value"),
+    State({'type': 'ca_etape_var5_','index': ALL}, "value"),
+    State({'type': 'ca_etape_op5_','index': ALL}, "value"),
+
+    State({'type': 'ca_etape_mod6_','index': ALL}, "value"),
+    State({'type': 'ca_etape_var6_','index': ALL}, "value"),
+    State({'type': 'ca_etape_op6_','index': ALL}, "value"),
+
+    State({'type': 'ca_etape_mod7_','index': ALL}, "value"),
+    State({'type': 'ca_etape_var7_','index': ALL}, "value"),
+    State({'type': 'ca_etape_op7_','index': ALL}, "value"),
+
+    State({'type': 'ca_etape_mod8_','index': ALL}, "value"),
+    State({'type': 'ca_etape_var8_','index': ALL}, "value"),
+    State({'type': 'ca_etape_op8_','index': ALL}, "value"),
+
+    State({'type': 'ca_etape_mod9_','index': ALL}, "value"),
+    State({'type': 'ca_etape_var9_','index': ALL}, "value"),
+    State({'type': 'ca_etape_op9_','index': ALL}, "value"),
+
+    State({'type':'ca_topfiltre','index':MATCH}, "value"),
+
+    State({'type': 'ca_filtre_var','index': ALL}, "value"),
+    State({'type': 'ca_filtre_mod','index': ALL}, "value"),
+    State({'type': 'ca_filtre_op','index': ALL}, "value"),
+
+    State("ca_topmode", "value"),
+)
+def Critereglobal(ca_calculer,ca_ajouter_etape,ca_ajouter_etape_critere,
+                  ca_etape_mod,ca_etape_var,ca_etape_duree,
+                  ca_eu_lieu,ca_eu_lieu2,
+                  start_date,end_date,
+
+                  ca_etape_mod1_,ca_etape_var1_,ca_etape_op1_,
+                  ca_etape_mod2_,ca_etape_var2_,ca_etape_op2_,
+                  ca_etape_mod3_,ca_etape_var3_,ca_etape_op3_,
+                  ca_etape_mod4_,ca_etape_var4_,ca_etape_op4_,
+                  ca_etape_mod5_,ca_etape_var5_,ca_etape_op5_,
+                  ca_etape_mod6_,ca_etape_var6_,ca_etape_op6_,
+                  ca_etape_mod7_,ca_etape_var7_,ca_etape_op7_,
+                  ca_etape_mod8_,ca_etape_var8_,ca_etape_op8_,
+                  ca_etape_mod9_,ca_etape_var9_,ca_etape_op9_,
+
+                  ca_topfiltre,
+                  ca_filtre_var,ca_filtre_mod,ca_filtre_op,
+                  ca_topmode):
+
+    ctx = dash.callback_context
+
+    global ca_duree_fin
+    global ca_date_fin
+
+    # -----------------------
+    # CORRECTION DATE
+    # -----------------------
+
+    start_date = pd.to_datetime(start_date)
+    end_date = pd.to_datetime(end_date)
+
+    parametre = ctx.states
+
+    nb_etape = (ca_ajouter_etape or 0) + 1
+
+    df_aeulieu=[]
+    df_aeulieu2=[]
+    df_nbcritere=[]
+    df_duree=[]
+
+    for i in range(nb_etape):
+
+        df_aeulieu.append(parametre[f'{{"index":{i},"type":"ca_eu_lieu"}}.value'])
+
+        if i==0:
+            df_duree.append(100)
+        else:
+            df_duree.append(parametre[f'{{"index":{i},"type":"ca_etape_duree"}}.value'])
+
+        clic = parametre[f'{{"index":{i},"type":"ca_ajouter_etape_critere"}}.n_clicks']
+
+        if clic is None:
+            df_nbcritere.append(1)
+        else:
+            df_nbcritere.append(clic+1)
+
+        if i==0:
+            df_aeulieu2=["OUI"]
+        else:
+            df_aeulieu2.append(parametre[f'{{"index":{i},"type":"ca_eu_lieu2"}}.value'])
+
+    # -----------------------
+    # FILTRES
+    # -----------------------
+
+    global nb_critere_filtre
+    nb_filtre=nb_critere_filtre
+
+    top_filtre = ca_topfiltre
+
+    filtre_var=[]
+    filtre_mod=[]
+    filtre_op=[' ']
+
+    if top_filtre=='Oui':
+
+        for i in range(nb_filtre):
+
+            if i>0:
+                if parametre[f'{{"index":{i},"type":"ca_filtre_op"}}.value']=='ET':
+                    filtre_op.append('&')
+                else:
+                    filtre_op.append('|')
+
+            filtre_var.append(parametre[f'{{"index":{i},"type":"ca_filtre_var"}}.value'])
+            filtre_mod.append(parametre[f'{{"index":{i},"type":"ca_filtre_mod"}}.value'])
+
+    if top_filtre=='Oui':
+
+        requete=""
+
+        for i in range(nb_filtre):
+
+            tmp_rqt=""
+
+            test=filtre_mod[i]
+
+            for j in range(len(test)):
+
+                if j==0:
+                    tmp_rqt="'"+test[j]
+                else:
+                    tmp_rqt=tmp_rqt+"','"+test[j]
+
+            tmp_rqt=tmp_rqt+"'"
+
+            requete=requete+" "+filtre_op[i]+" "+filtre_var[i]+" in [ "+ tmp_rqt +" ] "
+
+        df_tmp=df.query(requete)
+
+    else:
+
+        df_tmp=df
+
+    # -----------------------
+    # FILTRE DATE CORRIGÉ
+    # -----------------------
+
+    df_tmp = df_tmp[
+        (df_tmp['dateheure'] >= start_date) &
+        (df_tmp['dateheure'] < end_date + timedelta(days=1))
+    ]
+
+    df_tmp['date0']=df_tmp['dateheure']
+    df_tmp['id']=df_tmp['id']
+
+    global df_etape0
+    df_etape0=df_tmp
+
+    # -----------------------
+    # RELATION STRICT
+    # -----------------------
+
+    df_relation=df_etape0[['idt_grp_cli','id','datefinal']]
+
+    df_relation.sort_values(by=['idt_grp_cli','datefinal'], inplace=True)
+
+    df_relation['idt_grp_cli_a'] = df_relation['idt_grp_cli'].shift(-1).fillna(0).astype(int)
+    df_relation['id_a'] = df_relation['id'].shift(-1).fillna(0).astype(int)
+
+    df_relation['good'] = np.where(df_relation['idt_grp_cli_a'] == df_relation['idt_grp_cli'], 'oui','non')
+
+    df_relation['id_strict']=np.where(df_relation['good'] == 'oui',df_relation['id_a'] ,0)
+
+    df_relation = df_relation.drop(columns=['idt_grp_cli_a','good','id_a'])
+
+    df_relation = df_relation[['id','id_strict']]
+
+    # -----------------------
+    # RESULTAT
+    # -----------------------
+
+    global dataCA
+    dataCA=[]
+
+    ca_variable_analyse= df.columns.tolist()
+    ca_variable_analyse.remove('idt_grp_cli')
+    ca_variable_analyse.remove('datefinal')
+
+    ca_visu_etape= range(1,nb_etape+1)
+
+    ca_graphe_tunneldetransfo=ca_tunneldetransfo(nb_etape)
+
+    fin= html.Div([
+        html.Hr(),
+
+        dbc.Row([
+            dbc.Col(html.P(
+                "Tunnel de transfo",
+                style={'width':'50%','textAlign':'center','color':'#FFFFFF','font-size':'20px','font-weight':'bold'}
+            ))
+        ]),
+
+        dbc.Row([
+            dbc.Col(
+                dcc.Graph(
+                    figure=ca_graphe_tunneldetransfo,
+                    id='graphCA_1'
+                ),
+                style={'width':'45%','background-color':'#084B66'}
+            )
+        ])
+    ])
+
+    return fin
+
+
+
+
+
+# version pour supprimer 
+
+@app.callback(
+    Output('ca_filtre_ajout', 'children'),
+    Input('ca_filtre_ajouter', 'n_clicks'),
+    Input({'type': 'ca_filtre_delete','index': ALL}, 'n_clicks'),
+    State('ca_filtre_ajout', 'children')
+)
+def gestion_filtre(n_add, n_delete, children):
+
+    ctx = dash.callback_context
+
+    if not ctx.triggered:
+        return children
+
+    trigger = ctx.triggered[0]['prop_id']
+
+    # ---------------------
+    # AJOUT FILTRE
+    # ---------------------
+
+    if "ca_filtre_ajouter" in trigger:
+
+        index = len(children)
+
+        tmp = dbc.Row([
+
+            dbc.Col([
+                dcc.Dropdown(
+                    id={'type': 'ca_filtre_op','index': index},
+                    options=[{'label': 'ET', 'value': 'ET'},
+                             {'label': 'OU', 'value': 'OU'}],
+                    value="ET"
+                )
+            ], width=2),
+
+            dbc.Col([
+                dcc.Dropdown(
+                    id={'type': 'ca_filtre_var','index': index},
+                    options=[{'label':name, 'value':name} for name in names],
+                    value=list(fnameDict.keys())[0]
+                )
+            ], width=3),
+
+            dbc.Col([
+                dcc.Dropdown(
+                    id={'type': 'ca_filtre_mod','index': index},
+                    multi=True
+                )
+            ], width=5),
+
+            dbc.Col([
+                dbc.Button(
+                    "X",
+                    id={'type':'ca_filtre_delete','index':index},
+                    color="danger",
+                    size="sm"
+                )
+            ], width=1)
+
+        ])
+
+        children.append(tmp)
+
+    # ---------------------
+    # SUPPRESSION
+    # ---------------------
+
+    elif "ca_filtre_delete" in trigger:
+
+        index = int(trigger.split('"index":')[1].split('}')[0])
+
+        children = [
+            child for i, child in enumerate(children)
+            if i != index
+        ]
+
+    return children
+
+
+# accordion:
+@app.callback(
+    [Output("cni2", "children"), Output("cni3", "children")],
+    [Input("cni_client", "value")],
+    State('cni_periodePar', 'start_date'),
+    State('cni_periodePar', 'end_date'),
+)
+def cnicateidentite2(client, debut, fin):
+
+    df_cni = df[
+        (df['datefinal'] >= debut) &
+        (df['datefinal'] <= fin) &
+        (df['idt_grp_cli'] == client)
+    ]
+
+    df_cni = df_cni[
+        ['idt_grp_cli','canal','macro','interaction',
+         'dateheure','tr_age_120220300',
+         'region_120220300','personae_120220300']
+    ]
+
+    df_cni.sort_values(by=['dateheure'], ascending=True, inplace=True)
+
+    card_icon = {
+        "color": "white",
+        "textAlign": "center",
+        "fontSize": 30,
+        "margin": "auto",
+    }
+
+    # -------------------------
+    # PROFIL CLIENT
+    # -------------------------
+
+    profil = []
+
+    tmp = df_cni[
+        ['idt_grp_cli','tr_age_120220300',
+         'region_120220300','personae_120220300']
+    ]
+
+    idt_grp_cli = tmp['idt_grp_cli'].tolist()
+    tr_age = tmp['tr_age_120220300'].tolist()
+    marche = tmp['region_120220300'].tolist()
+    score_personae = tmp['personae_120220300'].tolist()
+
+    profil_card = dbc.CardGroup([
+
+        dbc.Card(
+            html.Div(className="fas fa-users", style=card_icon),
+            className="bg-info",
+            style={"maxWidth": 75},
+        ),
+
+        dbc.Card(
+            dbc.CardBody([
+
+                html.P("identifiant : " + str(idt_grp_cli[0]), className="card-text"),
+                html.P("age : " + str(tr_age[0]), className="card-text"),
+                html.P("region : " + str(marche[0]), className="card-text"),
+                html.P("score personae : " + str(score_personae[0]), className="card-text"),
+
+            ])
+        ),
+
+    ], className="mt-4 shadow")
+
+    profil.append(profil_card)
+
+    # -------------------------
+    # PARCOURS PAR CANAL
+    # -------------------------
+
+    icons = {
+        "WEB": "fas fa-globe",
+        "COURRIER": "fas fa-envelope",
+        "SYSTEME": "fas fa-industry",
+        "EMAIL": "fas fa-inbox",
+        "APPEL ENTRANT": "fas fa-phone",
+        "APPEL SORTANT": "fas fa-phone",
+    }
+
+    accordion_items = []
+
+    for canal, df_canal in df_cni.groupby("canal"):
+
+        cards = []
+
+        for i in range(df_canal.shape[0]):
+
+            row = df_canal.iloc[i]
+
+            date = row["dateheure"]
+            interaction = row["interaction"]
+
+            icon = icons.get(canal, "fas fa-users")
+
+            card = dbc.CardGroup([
+
+                dbc.Card(
+                    html.Div(className=icon, style=card_icon),
+                    className="bg-info",
+                    style={"maxWidth": 75},
+                ),
+
+                dbc.Card(
+                    dbc.CardBody([
+                        html.P(
+                            str(date) + " : " + canal + " - " + interaction,
+                            className="card-text",
+                        )
+                    ])
+                ),
+
+            ], className="mt-2 shadow")
+
+            cards.append(card)
+
+        accordion_items.append(
+            dbc.AccordionItem(
+                children=cards,
+                title=canal
+            )
+        )
+
+    parcours = dbc.Accordion(
+        accordion_items,
+        start_collapsed=True,
+        always_open=True
+    )
+
+    return parcours, profil
