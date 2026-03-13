@@ -1,4 +1,215 @@
-correction tunnel
+@app.callback(
+    Output('graphCA_3', 'figure'),
+    Output('graphCA_2', 'figure'),
+    Output('dash', 'children'),
+    Output('ca_graphe_duree', 'figure'),
+    Input('variableCA_Analyse', 'value'),
+    State("ca_ajouter_etape", "n_clicks"),
+)
+def ca_tunneltransfo2(variableCA, nbetape):
+
+    var = variableCA
+    global df
+
+    ctx = dash.callback_context
+    parametre = ctx.states
+
+    nb_etape = parametre["ca_ajouter_etape.n_clicks"] + 1
+
+    # ----------------------------
+    # Préparation des dataframes
+    # ----------------------------
+
+    df_tmp = {}
+    listenoeud_list = []
+
+    for i in range(1, nb_etape + 1):
+
+        df_etape = globals()[f"df_etape_finale{i}"]
+
+        df_tmp[i] = df_etape[[f'id{i}']].drop_duplicates()
+
+        df_tmp[i] = pd.merge(
+            df_tmp[i],
+            df,
+            left_on=f'id{i}',
+            right_on='id'
+        )
+
+        df_tmp_comptage = (
+            df_tmp[i]
+            .groupby(var)
+            .size()
+            .reset_index(name="counts")
+        )
+
+        df_tmp_comptage["counts"] = (
+            100 * df_tmp_comptage["counts"] /
+            df_tmp_comptage["counts"].sum()
+        )
+
+        df_tmp_comptage["etape"] = f"etape{i}"
+
+        listenoeud_list.append(df_tmp_comptage)
+
+    listenoeud = pd.concat(listenoeud_list)
+
+    # ----------------------------
+    # Graphique évolution
+    # ----------------------------
+
+    figgraphCA_3 = px.bar(
+        listenoeud,
+        x="etape",
+        y="counts",
+        color=var
+    )
+
+    figgraphCA_3.update_layout(
+        title=f"Evolution de la répartition en fonction {var}",
+        title_x=0.5,
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        title_font_family="Times New Roman",
+        title_font_color="#FFFFFF",
+        font=dict(
+            family="Courier",
+            size=12,
+            color="white"
+        ),
+        legend=dict(traceorder="reversed")
+    )
+
+    figgraphCA_3.update_xaxes(linecolor='#F0EDED', color='#F0EDED')
+    figgraphCA_3.update_yaxes(linecolor='#F0EDED', color='#F0EDED')
+
+    # ----------------------------
+    # Funnel
+    # ----------------------------
+
+    ca_listemod = df.groupby(var).size().reset_index(name="countsclient")
+
+    figgraphCA_2 = go.Figure()
+
+    for j in range(ca_listemod.shape[0]):
+
+        nom = ca_listemod.iloc[j][var]
+
+        xtmp = []
+
+        for i in range(1, nb_etape + 1):
+
+            tmp = df_tmp[i]
+            xtmp.append(tmp[tmp[var] == nom].shape[0])
+
+        figgraphCA_2.add_trace(
+            go.Funnel(
+                name=nom,
+                y=[f"Etape {i}" for i in range(1, nb_etape + 1)],
+                x=xtmp,
+                textposition="inside",
+                textinfo="value+percent initial"
+            )
+        )
+
+    figgraphCA_2.update_layout(
+        title=f"Tunnel de transfo en fonction {var}",
+        title_x=0.5,
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        title_font_family="Times New Roman",
+        title_font_color="#FFFFFF",
+        font=dict(
+            family="Courier",
+            size=12,
+            color="white"
+        ),
+        legend=dict(traceorder="reversed")
+    )
+
+    figgraphCA_2.update_xaxes(linecolor='#F0EDED', color='#F0EDED')
+    figgraphCA_2.update_yaxes(linecolor='#F0EDED', color='#F0EDED')
+
+    # ----------------------------
+    # Pivot table data
+    # ----------------------------
+
+    dataCA = []
+    dataCA.append(['etape', 'interaction', 'canal', 'macro', 'counts'])
+
+    for j in range(1, nb_etape + 1):
+
+        tmp = (
+            df_tmp[j]
+            .groupby(['interaction', 'canal', 'macro'])
+            .size()
+            .reset_index(name='counts')
+        )
+
+        tmp['etape'] = f"etape{j}"
+
+        for _, r in tmp.iterrows():
+
+            dataCA.append([
+                r['etape'],
+                r['interaction'],
+                r['canal'],
+                r['macro'],
+                r['counts']
+            ])
+
+    pivot_table = dash_pivottable.PivotTable(
+        data=dataCA,
+        rows=['etape'],
+        aggregatorName="Sum",
+        vals=["counts"]
+    )
+
+    # ----------------------------
+    # Durée entre étapes
+    # ----------------------------
+
+    for j in range(2, nb_etape + 1):
+
+        df_tmp_duree = (
+            globals()[f"df_etape_finale{j}"]
+            .groupby(['delai'])
+            .size()
+            .reset_index(name='counts')
+        )
+
+        df_tmp_duree['etape'] = f"etape{j-1}-etape{j}"
+
+        if j == 2:
+            duree = df_tmp_duree
+        else:
+            duree = pd.concat([duree, df_tmp_duree])
+
+    fig = px.histogram(
+        duree,
+        x="delai",
+        y="counts",
+        color="etape",
+        marginal="box",
+        hover_data=duree.columns
+    )
+
+    fig.update_layout(
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        title_font_family="Times New Roman",
+        font=dict(
+            family="Courier",
+            size=12,
+            color="white"
+        ),
+        legend=dict(traceorder="reversed")
+    )
+
+    fig.update_xaxes(linecolor='#F0EDED', color='#F0EDED')
+    fig.update_yaxes(linecolor='#F0EDED', color='#F0EDED')
+
+    return figgraphCA_3, figgraphCA_2, pivot_table, fig
 
 @app.callback(
     Output("resultat", "children"),
@@ -459,3 +670,6 @@ def cnicateidentite2(client, debut, fin):
     )
 
     return parcours, profil
+
+
+
