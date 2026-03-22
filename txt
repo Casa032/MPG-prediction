@@ -1,714 +1,775 @@
-async function analyserAvecGemini(contenu) {
-  const API_KEY = "AIza...votre_cle";
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`;
-
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{
-        parts: [{ text: `Tu es expert en analyse de données. Analyse ces indicateurs et donne un résumé + recommandations en français :\n\n${contenu}` }]
-      }],
-      generationConfig: { temperature: 0.3, maxOutputTokens: 1024 }
-    })
-  });
-
-  const data = await response.json();
-  return data.candidates[0].content.parts[0].text;
-}
-
-<div id="analyse-ia"></div>
-
-// Déclenché au chargement ou sur un bouton
-async function lancerAnalyse() {
-  const contenu = document.getElementById('votre-section-indicateurs').innerText;
-  const resultat = await analyserAvecGemini(contenu);
-  document.getElementById('analyse-ia').innerText = resultat;
-}
-
-// Au chargement de la page
-window.addEventListener('load', lancerAnalyse);
-
-// OU sur un bouton
-// document.getElementById('btn-analyser').addEventListener('click', lancerAnalyse);
-
-
-
-
-
-
-@app.callback(
-    Output('graphCA_3', 'figure'),
-    Output('graphCA_2', 'figure'),
-    Output('dash', 'children'),
-    Output('ca_graphe_duree', 'figure'),
-    Input('variableCA_Analyse', 'value'),
-    State("ca_ajouter_etape", "n_clicks"),
-)
-def ca_tunneltransfo2(variableCA, nbetape):
-
-    var = variableCA
-    global df
-
-    ctx = dash.callback_context
-    parametre = ctx.states
-
-    nb_etape = parametre["ca_ajouter_etape.n_clicks"] + 1
-
-    # ----------------------------
-    # Préparation des dataframes
-    # ----------------------------
-
-    df_tmp = {}
-    listenoeud_list = []
-
-    for i in range(1, nb_etape + 1):
-
-        df_etape = globals()[f"df_etape_finale{i}"]
-
-        df_tmp[i] = df_etape[[f'id{i}']].drop_duplicates()
-
-        df_tmp[i] = pd.merge(
-            df_tmp[i],
-            df,
-            left_on=f'id{i}',
-            right_on='id'
-        )
-
-        df_tmp_comptage = (
-            df_tmp[i]
-            .groupby(var)
-            .size()
-            .reset_index(name="counts")
-        )
-
-        df_tmp_comptage["counts"] = (
-            100 * df_tmp_comptage["counts"] /
-            df_tmp_comptage["counts"].sum()
-        )
-
-        df_tmp_comptage["etape"] = f"etape{i}"
-
-        listenoeud_list.append(df_tmp_comptage)
-
-    listenoeud = pd.concat(listenoeud_list)
-
-    # ----------------------------
-    # Graphique évolution
-    # ----------------------------
-
-    figgraphCA_3 = px.bar(
-        listenoeud,
-        x="etape",
-        y="counts",
-        color=var
-    )
-
-    figgraphCA_3.update_layout(
-        title=f"Evolution de la répartition en fonction {var}",
-        title_x=0.5,
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        title_font_family="Times New Roman",
-        title_font_color="#FFFFFF",
-        font=dict(
-            family="Courier",
-            size=12,
-            color="white"
-        ),
-        legend=dict(traceorder="reversed")
-    )
-
-    figgraphCA_3.update_xaxes(linecolor='#F0EDED', color='#F0EDED')
-    figgraphCA_3.update_yaxes(linecolor='#F0EDED', color='#F0EDED')
-
-    # ----------------------------
-    # Funnel
-    # ----------------------------
-
-    ca_listemod = df.groupby(var).size().reset_index(name="countsclient")
-
-    figgraphCA_2 = go.Figure()
-
-    for j in range(ca_listemod.shape[0]):
-
-        nom = ca_listemod.iloc[j][var]
-
-        xtmp = []
-
-        for i in range(1, nb_etape + 1):
-
-            tmp = df_tmp[i]
-            xtmp.append(tmp[tmp[var] == nom].shape[0])
-
-        figgraphCA_2.add_trace(
-            go.Funnel(
-                name=nom,
-                y=[f"Etape {i}" for i in range(1, nb_etape + 1)],
-                x=xtmp,
-                textposition="inside",
-                textinfo="value+percent initial"
-            )
-        )
-
-    figgraphCA_2.update_layout(
-        title=f"Tunnel de transfo en fonction {var}",
-        title_x=0.5,
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        title_font_family="Times New Roman",
-        title_font_color="#FFFFFF",
-        font=dict(
-            family="Courier",
-            size=12,
-            color="white"
-        ),
-        legend=dict(traceorder="reversed")
-    )
-
-    figgraphCA_2.update_xaxes(linecolor='#F0EDED', color='#F0EDED')
-    figgraphCA_2.update_yaxes(linecolor='#F0EDED', color='#F0EDED')
-
-    # ----------------------------
-    # Pivot table data
-    # ----------------------------
-
-    dataCA = []
-    dataCA.append(['etape', 'interaction', 'canal', 'macro', 'counts'])
-
-    for j in range(1, nb_etape + 1):
-
-        tmp = (
-            df_tmp[j]
-            .groupby(['interaction', 'canal', 'macro'])
-            .size()
-            .reset_index(name='counts')
-        )
-
-        tmp['etape'] = f"etape{j}"
-
-        for _, r in tmp.iterrows():
-
-            dataCA.append([
-                r['etape'],
-                r['interaction'],
-                r['canal'],
-                r['macro'],
-                r['counts']
-            ])
-
-    pivot_table = dash_pivottable.PivotTable(
-        data=dataCA,
-        rows=['etape'],
-        aggregatorName="Sum",
-        vals=["counts"]
-    )
-
-    # ----------------------------
-    # Durée entre étapes
-    # ----------------------------
-
-    for j in range(2, nb_etape + 1):
-
-        df_tmp_duree = (
-            globals()[f"df_etape_finale{j}"]
-            .groupby(['delai'])
-            .size()
-            .reset_index(name='counts')
-        )
-
-        df_tmp_duree['etape'] = f"etape{j-1}-etape{j}"
-
-        if j == 2:
-            duree = df_tmp_duree
-        else:
-            duree = pd.concat([duree, df_tmp_duree])
-
-    fig = px.histogram(
-        duree,
-        x="delai",
-        y="counts",
-        color="etape",
-        marginal="box",
-        hover_data=duree.columns
-    )
-
-    fig.update_layout(
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        title_font_family="Times New Roman",
-        font=dict(
-            family="Courier",
-            size=12,
-            color="white"
-        ),
-        legend=dict(traceorder="reversed")
-    )
-
-    fig.update_xaxes(linecolor='#F0EDED', color='#F0EDED')
-    fig.update_yaxes(linecolor='#F0EDED', color='#F0EDED')
-
-    return figgraphCA_3, figgraphCA_2, pivot_table, fig
-
-@app.callback(
-    Output("resultat", "children"),
-    Input("ca_calculer", "n_clicks"),
-    State("ca_ajouter_etape", "n_clicks"),
-    State({'type': 'ca_ajouter_etape_critere', 'index': ALL}, "n_clicks"),
-    State({'type': 'ca_etape_mod','index': ALL}, "value"),
-    State({'type': 'ca_etape_var','index': ALL}, "value"),
-    State({'type': 'ca_etape_duree','index': ALL}, "value"),
-    State({'type': 'ca_eu_lieu','index': ALL}, "value"),
-    State({'type': 'ca_eu_lieu2','index': ALL}, "value"),
-    State('ca_periode', 'start_date'),
-    State('ca_periode', 'end_date'),
-
-    State({'type': 'ca_etape_mod1_','index': ALL}, "value"),
-    State({'type': 'ca_etape_var1_','index': ALL}, "value"),
-    State({'type': 'ca_etape_op1_','index': ALL}, "value"),
-
-    State({'type': 'ca_etape_mod2_','index': ALL}, "value"),
-    State({'type': 'ca_etape_var2_','index': ALL}, "value"),
-    State({'type': 'ca_etape_op2_','index': ALL}, "value"),
-
-    State({'type': 'ca_etape_mod3_','index': ALL}, "value"),
-    State({'type': 'ca_etape_var3_','index': ALL}, "value"),
-    State({'type': 'ca_etape_op3_','index': ALL}, "value"),
-
-    State({'type': 'ca_etape_mod4_','index': ALL}, "value"),
-    State({'type': 'ca_etape_var4_','index': ALL}, "value"),
-    State({'type': 'ca_etape_op4_','index': ALL}, "value"),
-
-    State({'type': 'ca_etape_mod5_','index': ALL}, "value"),
-    State({'type': 'ca_etape_var5_','index': ALL}, "value"),
-    State({'type': 'ca_etape_op5_','index': ALL}, "value"),
-
-    State({'type': 'ca_etape_mod6_','index': ALL}, "value"),
-    State({'type': 'ca_etape_var6_','index': ALL}, "value"),
-    State({'type': 'ca_etape_op6_','index': ALL}, "value"),
-
-    State({'type': 'ca_etape_mod7_','index': ALL}, "value"),
-    State({'type': 'ca_etape_var7_','index': ALL}, "value"),
-    State({'type': 'ca_etape_op7_','index': ALL}, "value"),
-
-    State({'type': 'ca_etape_mod8_','index': ALL}, "value"),
-    State({'type': 'ca_etape_var8_','index': ALL}, "value"),
-    State({'type': 'ca_etape_op8_','index': ALL}, "value"),
-
-    State({'type': 'ca_etape_mod9_','index': ALL}, "value"),
-    State({'type': 'ca_etape_var9_','index': ALL}, "value"),
-    State({'type': 'ca_etape_op9_','index': ALL}, "value"),
-
-    State({'type':'ca_topfiltre','index':MATCH}, "value"),
-
-    State({'type': 'ca_filtre_var','index': ALL}, "value"),
-    State({'type': 'ca_filtre_mod','index': ALL}, "value"),
-    State({'type': 'ca_filtre_op','index': ALL}, "value"),
-
-    State("ca_topmode", "value"),
-)
-def Critereglobal(ca_calculer,ca_ajouter_etape,ca_ajouter_etape_critere,
-                  ca_etape_mod,ca_etape_var,ca_etape_duree,
-                  ca_eu_lieu,ca_eu_lieu2,
-                  start_date,end_date,
-
-                  ca_etape_mod1_,ca_etape_var1_,ca_etape_op1_,
-                  ca_etape_mod2_,ca_etape_var2_,ca_etape_op2_,
-                  ca_etape_mod3_,ca_etape_var3_,ca_etape_op3_,
-                  ca_etape_mod4_,ca_etape_var4_,ca_etape_op4_,
-                  ca_etape_mod5_,ca_etape_var5_,ca_etape_op5_,
-                  ca_etape_mod6_,ca_etape_var6_,ca_etape_op6_,
-                  ca_etape_mod7_,ca_etape_var7_,ca_etape_op7_,
-                  ca_etape_mod8_,ca_etape_var8_,ca_etape_op8_,
-                  ca_etape_mod9_,ca_etape_var9_,ca_etape_op9_,
-
-                  ca_topfiltre,
-                  ca_filtre_var,ca_filtre_mod,ca_filtre_op,
-                  ca_topmode):
-
-    ctx = dash.callback_context
-
-    global ca_duree_fin
-    global ca_date_fin
-
-    # -----------------------
-    # CORRECTION DATE
-    # -----------------------
-
-    start_date = pd.to_datetime(start_date)
-    end_date = pd.to_datetime(end_date)
-
-    parametre = ctx.states
-
-    nb_etape = (ca_ajouter_etape or 0) + 1
-
-    df_aeulieu=[]
-    df_aeulieu2=[]
-    df_nbcritere=[]
-    df_duree=[]
-
-    for i in range(nb_etape):
-
-        df_aeulieu.append(parametre[f'{{"index":{i},"type":"ca_eu_lieu"}}.value'])
-
-        if i==0:
-            df_duree.append(100)
-        else:
-            df_duree.append(parametre[f'{{"index":{i},"type":"ca_etape_duree"}}.value'])
-
-        clic = parametre[f'{{"index":{i},"type":"ca_ajouter_etape_critere"}}.n_clicks']
-
-        if clic is None:
-            df_nbcritere.append(1)
-        else:
-            df_nbcritere.append(clic+1)
-
-        if i==0:
-            df_aeulieu2=["OUI"]
-        else:
-            df_aeulieu2.append(parametre[f'{{"index":{i},"type":"ca_eu_lieu2"}}.value'])
-
-    # -----------------------
-    # FILTRES
-    # -----------------------
-
-    global nb_critere_filtre
-    nb_filtre=nb_critere_filtre
-
-    top_filtre = ca_topfiltre
-
-    filtre_var=[]
-    filtre_mod=[]
-    filtre_op=[' ']
-
-    if top_filtre=='Oui':
-
-        for i in range(nb_filtre):
-
-            if i>0:
-                if parametre[f'{{"index":{i},"type":"ca_filtre_op"}}.value']=='ET':
-                    filtre_op.append('&')
-                else:
-                    filtre_op.append('|')
-
-            filtre_var.append(parametre[f'{{"index":{i},"type":"ca_filtre_var"}}.value'])
-            filtre_mod.append(parametre[f'{{"index":{i},"type":"ca_filtre_mod"}}.value'])
-
-    if top_filtre=='Oui':
-
-        requete=""
-
-        for i in range(nb_filtre):
-
-            tmp_rqt=""
-
-            test=filtre_mod[i]
-
-            for j in range(len(test)):
-
-                if j==0:
-                    tmp_rqt="'"+test[j]
-                else:
-                    tmp_rqt=tmp_rqt+"','"+test[j]
-
-            tmp_rqt=tmp_rqt+"'"
-
-            requete=requete+" "+filtre_op[i]+" "+filtre_var[i]+" in [ "+ tmp_rqt +" ] "
-
-        df_tmp=df.query(requete)
-
-    else:
-
-        df_tmp=df
-
-    # -----------------------
-    # FILTRE DATE CORRIGÉ
-    # -----------------------
-
-    df_tmp = df_tmp[
-        (df_tmp['dateheure'] >= start_date) &
-        (df_tmp['dateheure'] < end_date + timedelta(days=1))
-    ]
-
-    df_tmp['date0']=df_tmp['dateheure']
-    df_tmp['id']=df_tmp['id']
-
-    global df_etape0
-    df_etape0=df_tmp
-
-    # -----------------------
-    # RELATION STRICT
-    # -----------------------
-
-    df_relation=df_etape0[['idt_grp_cli','id','datefinal']]
-
-    df_relation.sort_values(by=['idt_grp_cli','datefinal'], inplace=True)
-
-    df_relation['idt_grp_cli_a'] = df_relation['idt_grp_cli'].shift(-1).fillna(0).astype(int)
-    df_relation['id_a'] = df_relation['id'].shift(-1).fillna(0).astype(int)
-
-    df_relation['good'] = np.where(df_relation['idt_grp_cli_a'] == df_relation['idt_grp_cli'], 'oui','non')
-
-    df_relation['id_strict']=np.where(df_relation['good'] == 'oui',df_relation['id_a'] ,0)
-
-    df_relation = df_relation.drop(columns=['idt_grp_cli_a','good','id_a'])
-
-    df_relation = df_relation[['id','id_strict']]
-
-    # -----------------------
-    # RESULTAT
-    # -----------------------
-
-    global dataCA
-    dataCA=[]
-
-    ca_variable_analyse= df.columns.tolist()
-    ca_variable_analyse.remove('idt_grp_cli')
-    ca_variable_analyse.remove('datefinal')
-
-    ca_visu_etape= range(1,nb_etape+1)
-
-    ca_graphe_tunneldetransfo=ca_tunneldetransfo(nb_etape)
-
-    fin= html.Div([
-        html.Hr(),
-
-        dbc.Row([
-            dbc.Col(html.P(
-                "Tunnel de transfo",
-                style={'width':'50%','textAlign':'center','color':'#FFFFFF','font-size':'20px','font-weight':'bold'}
-            ))
-        ]),
-
-        dbc.Row([
-            dbc.Col(
-                dcc.Graph(
-                    figure=ca_graphe_tunneldetransfo,
-                    id='graphCA_1'
-                ),
-                style={'width':'45%','background-color':'#084B66'}
-            )
-        ])
-    ])
-
-    return fin
-
-
-
-
-
-# version pour supprimer 
-
-@app.callback(
-    Output('ca_filtre_ajout', 'children'),
-    Input('ca_filtre_ajouter', 'n_clicks'),
-    Input({'type': 'ca_filtre_delete','index': ALL}, 'n_clicks'),
-    State('ca_filtre_ajout', 'children')
-)
-def gestion_filtre(n_add, n_delete, children):
-
-    ctx = dash.callback_context
-
-    if not ctx.triggered:
-        return children
-
-    trigger = ctx.triggered[0]['prop_id']
-
-    # ---------------------
-    # AJOUT FILTRE
-    # ---------------------
-
-    if "ca_filtre_ajouter" in trigger:
-
-        index = len(children)
-
-        tmp = dbc.Row([
-
-            dbc.Col([
-                dcc.Dropdown(
-                    id={'type': 'ca_filtre_op','index': index},
-                    options=[{'label': 'ET', 'value': 'ET'},
-                             {'label': 'OU', 'value': 'OU'}],
-                    value="ET"
-                )
-            ], width=2),
-
-            dbc.Col([
-                dcc.Dropdown(
-                    id={'type': 'ca_filtre_var','index': index},
-                    options=[{'label':name, 'value':name} for name in names],
-                    value=list(fnameDict.keys())[0]
-                )
-            ], width=3),
-
-            dbc.Col([
-                dcc.Dropdown(
-                    id={'type': 'ca_filtre_mod','index': index},
-                    multi=True
-                )
-            ], width=5),
-
-            dbc.Col([
-                dbc.Button(
-                    "X",
-                    id={'type':'ca_filtre_delete','index':index},
-                    color="danger",
-                    size="sm"
-                )
-            ], width=1)
-
-        ])
-
-        children.append(tmp)
-
-    # ---------------------
-    # SUPPRESSION
-    # ---------------------
-
-    elif "ca_filtre_delete" in trigger:
-
-        index = int(trigger.split('"index":')[1].split('}')[0])
-
-        children = [
-            child for i, child in enumerate(children)
-            if i != index
-        ]
-
-    return children
-
-
-# accordion:
-@app.callback(
-    [Output("cni2", "children"), Output("cni3", "children")],
-    [Input("cni_client", "value")],
-    State('cni_periodePar', 'start_date'),
-    State('cni_periodePar', 'end_date'),
-)
-def cnicateidentite2(client, debut, fin):
-
-    df_cni = df[
-        (df['datefinal'] >= debut) &
-        (df['datefinal'] <= fin) &
-        (df['idt_grp_cli'] == client)
-    ]
-
-    df_cni = df_cni[
-        ['idt_grp_cli','canal','macro','interaction',
-         'dateheure','tr_age_120220300',
-         'region_120220300','personae_120220300']
-    ]
-
-    df_cni.sort_values(by=['dateheure'], ascending=True, inplace=True)
-
-    card_icon = {
-        "color": "white",
-        "textAlign": "center",
-        "fontSize": 30,
-        "margin": "auto",
-    }
-
-    # -------------------------
-    # PROFIL CLIENT
-    # -------------------------
-
-    profil = []
-
-    tmp = df_cni[
-        ['idt_grp_cli','tr_age_120220300',
-         'region_120220300','personae_120220300']
-    ]
-
-    idt_grp_cli = tmp['idt_grp_cli'].tolist()
-    tr_age = tmp['tr_age_120220300'].tolist()
-    marche = tmp['region_120220300'].tolist()
-    score_personae = tmp['personae_120220300'].tolist()
-
-    profil_card = dbc.CardGroup([
-
-        dbc.Card(
-            html.Div(className="fas fa-users", style=card_icon),
-            className="bg-info",
-            style={"maxWidth": 75},
-        ),
-
-        dbc.Card(
-            dbc.CardBody([
-
-                html.P("identifiant : " + str(idt_grp_cli[0]), className="card-text"),
-                html.P("age : " + str(tr_age[0]), className="card-text"),
-                html.P("region : " + str(marche[0]), className="card-text"),
-                html.P("score personae : " + str(score_personae[0]), className="card-text"),
-
-            ])
-        ),
-
-    ], className="mt-4 shadow")
-
-    profil.append(profil_card)
-
-    # -------------------------
-    # PARCOURS PAR CANAL
-    # -------------------------
-
-    icons = {
-        "WEB": "fas fa-globe",
-        "COURRIER": "fas fa-envelope",
-        "SYSTEME": "fas fa-industry",
-        "EMAIL": "fas fa-inbox",
-        "APPEL ENTRANT": "fas fa-phone",
-        "APPEL SORTANT": "fas fa-phone",
-    }
-
-    accordion_items = []
-
-    for canal, df_canal in df_cni.groupby("canal"):
-
-        cards = []
-
-        for i in range(df_canal.shape[0]):
-
-            row = df_canal.iloc[i]
-
-            date = row["dateheure"]
-            interaction = row["interaction"]
-
-            icon = icons.get(canal, "fas fa-users")
-
-            card = dbc.CardGroup([
-
-                dbc.Card(
-                    html.Div(className=icon, style=card_icon),
-                    className="bg-info",
-                    style={"maxWidth": 75},
-                ),
-
-                dbc.Card(
-                    dbc.CardBody([
-                        html.P(
-                            str(date) + " : " + canal + " - " + interaction,
-                            className="card-text",
-                        )
-                    ])
-                ),
-
-            ], className="mt-2 shadow")
-
-            cards.append(card)
-
-        accordion_items.append(
-            dbc.AccordionItem(
-                children=cards,
-                title=canal
-            )
-        )
-
-    parcours = dbc.Accordion(
-        accordion_items,
-        start_collapsed=True,
-        always_open=True
-    )
-
-    return parcours, profil
-
-
-
+# -------------------------------------------------------------------------------------------------
+# PHASE 3 - L'APPLICATION
+# CODE HTML - CSS - JAVASCRIPT
+
+with open('treemap.html', 'r', encoding='utf-8') as f:
+    treemap_html = f.read()
+
+with open('bar_entite.html', 'r', encoding='utf-8') as f:
+    bar_entite_html = f.read()
+
+API_KEY  = client.api_key
+BASE_URL = str(client.base_url)
+if not BASE_URL.endswith('/'):
+    BASE_URL += '/'
+
+html_content = f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Cofidis Group - Analytics 2026</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #ecf0f1;
+            color: #2c3e50;
+        }}
+
+        .dashboard {{ display: flex; min-height: 100vh; }}
+
+        .sidebar {{
+            width: 300px;
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+            padding: 20px;
+            position: fixed;
+            height: 100vh;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+        }}
+
+        .logo {{
+            text-align: center;
+            padding: 20px 0;
+            margin-bottom: 30px;
+            border-bottom: 2px solid rgba(255,255,255,0.3);
+        }}
+
+        .logo h2 {{ margin: 0; font-size: 24px; }}
+        .logo p   {{ margin: 5px 0 0 0; opacity: 0.8; font-size: 14px; }}
+        .resized-image {{ width: 75%; height: auto; }}
+
+        .nav-title {{ font-weight: bold; margin: 20px 0 10px 0; font-size: 14px; }}
+
+        .nav-btn {{
+            width: 100%;
+            padding: 15px;
+            margin: 10px 0;
+            background: rgba(255,255,255,0.1);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s;
+            text-align: left;
+        }}
+
+        .nav-btn:hover  {{ background: rgba(255,255,255,0.2); transform: translateX(5px); }}
+        .nav-btn.active {{ background: #e74c3c; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }}
+
+        .main-content {{ margin-left: 300px; padding: 30px; flex: 1; }}
+
+        .page       {{ display: none; }}
+        .page.active {{ display: block; animation: fadeIn 0.3s; }}
+
+        @keyframes fadeIn {{
+            from {{ opacity: 0; transform: translateY(10px); }}
+            to   {{ opacity: 1; transform: translateY(0); }}
+        }}
+
+        h1 {{ color: #2c3e50; margin-bottom: 25px; font-size: 32px; }}
+
+        .kpi-grid {{
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 30px;
+        }}
+
+        .kpi-card {{
+            color: white;
+            padding: 30px;
+            border-radius: 12px;
+            text-align: center;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+            transition: transform 0.3s;
+        }}
+
+        .kpi-card:hover  {{ transform: translateY(-5px); }}
+        .kpi-card.green  {{ background: linear-gradient(135deg, #27ae60, #27ae60dd); }}
+        .kpi-card.blue   {{ background: linear-gradient(135deg, #3498db, #3498dbdd); }}
+        .kpi-card.red    {{ background: linear-gradient(135deg, #e74c3c, #e74c3cdd); }}
+        .kpi-card.purple {{ background: linear-gradient(135deg, #9b59b6, #9b59b6dd); }}
+
+        .kpi-icon  {{ font-size: 48px; margin-bottom: 10px; }}
+        .kpi-value {{ font-size: 36px; font-weight: bold; margin-bottom: 5px; }}
+        .kpi-label {{ font-size: 14px; opacity: 0.9; }}
+
+        .card {{
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+
+        #map {{ height: 500px; }}
+
+        .table-container {{ overflow-x: auto; }}
+
+        table {{ width: 100%; border-collapse: collapse; background: white; }}
+
+        th {{
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+        }}
+
+        td {{ padding: 12px 15px; border-bottom: 1px solid #ecf0f1; }}
+        tr:nth-child(even) {{ background: #f8f9fa; }}
+        tr:hover           {{ background: #e3f2fd; }}
+
+        .filters     {{ display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap; }}
+        .filter-group {{ flex: 1; min-width: 150px; }}
+        .filter-group label {{ display: block; margin-bottom: 8px; font-weight: 600; color: #2c3e50; }}
+
+        select, input[type="text"], textarea {{
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #bdc3c7;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            background: white;
+            cursor: pointer;
+        }}
+
+        select:focus, input[type="text"]:focus, textarea:focus {{
+            outline: none;
+            border-color: #3498db;
+        }}
+
+        .stats-box {{
+            display: flex;
+            gap: 20px;
+            padding: 15px;
+            background: #e3f2fd;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }}
+
+        .stat-item  {{ flex: 1; text-align: center; }}
+        .stat-value {{ font-size: 24px; font-weight: bold; color: #2c3e50; }}
+        .stat-label {{ font-size: 12px; color: #7f8c8d; margin-top: 5px; }}
+
+        .info-message       {{ text-align: center; padding: 60px; color: #7f8c8d; }}
+        .info-message .icon {{ font-size: 64px; margin-bottom: 20px; }}
+
+        .loader {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 40px;
+            color: #7f8c8d;
+        }}
+
+        .spinner {{
+            width: 48px;
+            height: 48px;
+            border: 5px solid #ecf0f1;
+            border-top-color: #3498db;
+            border-radius: 50%;
+            animation: spin 0.9s linear infinite;
+            margin-bottom: 16px;
+        }}
+
+        @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+
+        .treemap-content     {{ width: 100%; height: 500px; display: flex; align-items: center; justify-content: center; }}
+        .custom-treemap-size {{ width: 900px; height: 700px; }}
+
+        @media (max-width: 1200px) {{ .kpi-grid {{ grid-template-columns: repeat(2, 1fr); }} }}
+        @media (max-width: 768px) {{
+            .sidebar      {{ width: 100%; position: relative; height: auto; }}
+            .main-content {{ margin-left: 0; }}
+            .kpi-grid     {{ grid-template-columns: 1fr; }}
+            .filters      {{ flex-direction: column; }}
+        }}
+    </style>
+</head>
+<body>
+<div class="dashboard">
+
+    <!-- ═══════════════ SIDEBAR ═══════════════ -->
+    <div class="sidebar">
+        <div class="logo">
+            <img src="logo-cofidis.png" alt="Logo COFIDIS" class="resized-image">
+            <h2>Projets Data & IA</h2>
+            <p>Mise à jour janvier 2026</p>
+        </div>
+        <div class="nav-title">NAVIGATION</div>
+        <button class="nav-btn active" onclick="showPage('page1', this)">🌐 Vue d'ensemble</button>
+        <button class="nav-btn"        onclick="showPage('page2', this)">📄 Données détaillées</button>
+        <button class="nav-btn"        onclick="showPage('page3', this)">📊 POC analyse</button>
+    </div>
+
+    <!-- ═══════════════ MAIN CONTENT ═══════════════ -->
+    <div class="main-content">
+
+        <!-- ════════════════════ PAGE 1 ════════════════════ -->
+        <div id="page1" class="page active">
+            <h1>🌐 Vue d'ensemble COFIDIS GROUP</h1>
+
+            <div class="kpi-grid">
+                <div class="kpi-card blue">
+                    <div class="kpi-icon">📁</div>
+                    <div class="kpi-value">{KPI_all_projects}</div>
+                    <div class="kpi-label">Projets au total</div>
+                </div>
+                <div class="kpi-card green">
+                    <div class="kpi-icon">🆕</div>
+                    <div class="kpi-value">0</div>
+                    <div class="kpi-label">Nouveaux projets</div>
+                </div>
+                <div class="kpi-card red">
+                    <div class="kpi-icon">📈</div>
+                    <div class="kpi-value">{str(round((nb_evolutions/KPI_all_projects)*100, 2))}%</div>
+                    <div class="kpi-label">Évolution significative sur l'ensemble des projets</div>
+                </div>
+                <div class="kpi-card purple">
+                    <div class="kpi-icon">📎</div>
+                    <div class="kpi-value">{nb_cas_IA}</div>
+                    <div class="kpi-label">Cas d'usage IA</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="treemap-content custom-treemap-size">
+                    {treemap_html}
+                </div>
+            </div>
+
+            <div class="card">
+                <div id="map"></div>
+            </div>
+
+            <div class="card" id="country-table-container">
+                <div class="info-message">
+                    <div class="icon">🗺️</div>
+                    <p style="font-size:18px;">Cliquez sur une entité de la carte pour voir les détails</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════════════════════ PAGE 2 ════════════════════ -->
+        <div id="page2" class="page">
+            <h1>📄 Données Détaillées</h1>
+
+            <div class="card">
+                <h3 style="margin-bottom:20px;">Filtres :</h3>
+                <div class="filters">
+                    <div class="filter-group">
+                        <label>🔍 Entité</label>
+                        <select id="filter-entite" onchange="applyFilters()">
+                            <option value="Tous" selected>Tous</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>🔍 Domaine</label>
+                        <select id="filter-domaine" onchange="applyFilters()">
+                            <option value="Tous" selected>Tous</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>🔍 Cas d'usage IA</label>
+                        <select id="filter-usageIA" onchange="applyFilters()">
+                            <option value="Tous" selected>Tous</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>🔍 État</label>
+                        <select id="filter-etat" onchange="applyFilters()">
+                            <option value="Tous" selected>Tous</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>🔍 Évolution significative</label>
+                        <select id="filter-evolution" onchange="applyFilters()">
+                            <option value="Tous" selected>Tous</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>🔍 Recherche par mots-clés</label>
+                        <input type="text" id="keyword-search" onkeyup="applyFilters()" placeholder="Rechercher...">
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats-box">
+                <div class="stat-item">
+                    <div class="stat-value" id="stat-count">-</div>
+                    <div class="stat-label">📁 Projets</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="table-container">
+                    <table id="data-table">
+                        <thead>
+                            <tr>
+                                <th>Entité</th>
+                                <th>Domaine</th>
+                                <th>Sujet</th>
+                                <th>Descriptif</th>
+                                <th>Contact entité</th>
+                                <th>Cas d'usage IA</th>
+                                <th>Date MAJ RDMI</th>
+                                <th>État</th>
+                                <th>Commentaires</th>
+                                <th>Date dernière MAJ</th>
+                                <th>Évolution significative</th>
+                                <th>Communautaire</th>
+                                <th>Entités participantes</th>
+                                <th>Modalités organisation</th>
+                                <th>Webinar</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="validate-btn-container" style="display:none; text-align:center; margin-top:24px; margin-bottom:30px;">
+                <button onclick="validateSelection()" style="
+                    background: linear-gradient(135deg, #2ecc71, #27ae60);
+                    color: white;
+                    border: none;
+                    padding: 14px 36px;
+                    font-size: 16px;
+                    font-weight: 600;
+                    border-radius: 10px;
+                    cursor: pointer;
+                    box-shadow: 0 4px 15px rgba(46,204,113,0.4);
+                    transition: transform 0.2s;
+                "
+                onmouseover="this.style.transform='translateY(-2px)'"
+                onmouseout="this.style.transform=''">
+                    ✅ Valider la sélection et lancer l'analyse
+                </button>
+            </div>
+        </div>
+
+        <!-- ════════════════════ PAGE 3 ════════════════════ -->
+        <div id="page3" class="page">
+            <h1>📊 POC Analyse IA</h1>
+
+            <!-- Résumé des filtres -->
+            <div id="filters-summary" style="
+                background: #f0f9ff;
+                border-left: 4px solid #3498db;
+                border-radius: 8px;
+                padding: 16px 20px;
+                margin-bottom: 24px;
+                font-size: 14px;
+                color: #2c3e50;
+            "></div>
+
+            <!-- Question libre -->
+            <div class="card">
+                <h3 style="margin-bottom:12px;">💬 Posez votre propre question</h3>
+                <p style="color:#7f8c8d; margin-bottom:16px; font-size:14px;">
+                    Votre question portera sur les <b id="nb-projets-label">0</b> projet(s) sélectionnés.
+                </p>
+                <div style="display:flex; gap:12px; align-items:flex-start;">
+                    <textarea id="user-question" rows="3"
+                        placeholder="Ex : Quels sont les projets les plus risqués ? Quels domaines sont les plus représentés ?"
+                        style="
+                            flex: 1;
+                            padding: 12px;
+                            border: 2px solid #bdc3c7;
+                            border-radius: 8px;
+                            font-size: 14px;
+                            font-family: inherit;
+                            resize: vertical;
+                            transition: border-color 0.2s;
+                        "
+                        onfocus="this.style.borderColor='#3498db'"
+                        onblur="this.style.borderColor='#bdc3c7'">
+                    </textarea>
+                    <button onclick="askCustomQuestion()" id="ask-btn" style="
+                        background: linear-gradient(135deg, #3498db, #2980b9);
+                        color: white;
+                        border: none;
+                        padding: 12px 24px;
+                        font-size: 15px;
+                        font-weight: 600;
+                        border-radius: 8px;
+                        cursor: pointer;
+                        white-space: nowrap;
+                        box-shadow: 0 4px 12px rgba(52,152,219,0.4);
+                        transition: transform 0.2s;
+                    "
+                    onmouseover="this.style.transform='translateY(-2px)'"
+                    onmouseout="this.style.transform=''">
+                        ➤ Envoyer
+                    </button>
+                </div>
+            </div>
+
+            <!-- Résultat LLM -->
+            <div class="card">
+                <h3 style="margin-bottom:16px;" id="analyse-titre">🤖 Analyse automatique</h3>
+                <div id="analyse-loader" class="loader">
+                    <div class="spinner"></div>
+                    <p>Analyse en cours, veuillez patienter...</p>
+                </div>
+                <div id="analyse-ia" style="line-height:1.8; color:#2c3e50; white-space:pre-wrap; display:none;"></div>
+            </div>
+        </div>
+
+    </div>
+    <!-- fin .main-content -->
+
+</div>
+<!-- fin .dashboard -->
+
+<script>
+    const dataPays    = {json.dumps(data_pays)};
+    const dataDetails = {json.dumps(data_details)};
+    const dataIA      = {json.dumps(data_ia)};
+
+    const API_KEY     = "{API_KEY}";
+    const BASE_URL    = "{BASE_URL}";
+    const MODEL       = "{PARAMS['model']}";
+    const MAX_TOKENS  = {PARAMS['max_tokens']};
+    const TEMPERATURE = {PARAMS['temperature']};
+
+    let selectedFilters         = null;
+    let filteredDataForAnalysis = [];
+
+    // ── Navigation ──────────────────────────────────────────────────────────
+    function showPage(pageId, btn) {{
+        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(pageId).classList.add('active');
+        btn.classList.add('active');
+        if (pageId === 'page2') initPage2();
+    }}
+
+    // ── Carte Plotly ─────────────────────────────────────────────────────────
+    function createMap() {{
+        const mapData = [{{
+            type         : 'choropleth',
+            locationmode : 'ISO-3',
+            locations    : dataPays.code,
+            z            : dataPays.valeur,
+            text         : dataPays.pays,
+            colorscale   : 'Reds',
+            hovertemplate: '<b>%{{text}}</b><br>Projets: %{{z:,.0f}}<extra></extra>',
+            colorbar     : {{ title: 'Projets' }}
+        }}];
+
+        const layout = {{
+            title : '<b>Projets Cofidis par pays</b>',
+            geo   : {{
+                scope        : 'europe',
+                projection   : {{ type: 'natural earth' }},
+                showland     : true,
+                landcolor    : 'rgb(243,243,243)',
+                coastlinecolor: 'rgb(204,204,204)',
+                showlakes    : true,
+                lakecolor    : 'rgb(230,245,255)',
+                showcountries: true,
+                countrycolor : 'rgb(204,204,204)'
+            }},
+            margin: {{l:0, r:0, t:40, b:0}},
+            height: 500
+        }};
+
+        Plotly.newPlot('map', mapData, layout, {{displayModeBar: false}});
+
+        document.getElementById('map').on('plotly_click', function(evtData) {{
+            const point = evtData.points[0];
+            const index = dataPays.code.indexOf(point.location);
+            if (index !== -1) showCountryData(dataPays.pays[index]);
+        }});
+    }}
+
+    // ── Détail pays ──────────────────────────────────────────────────────────
+    function showCountryData(pays) {{
+        const filtered = dataDetails.filter(d => d.Entité === pays);
+        if (!filtered.length) return;
+
+        let html = `
+            <h3>📋 Projets : <span style="color:#3498db">${{pays}}</span></h3>
+            <div class="stats-box" style="margin:15px 0">
+                <div class="stat-item">
+                    <div class="stat-value" style="color:#27ae60">0</div>
+                    <div class="stat-label">Nouveaux projets</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" style="color:#3498db">${{filtered.length}}</div>
+                    <div class="stat-label">Projets</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" style="color:#e74c3c">${{dataIA[pays] ?? 0}}</div>
+                    <div class="stat-label">Cas d'usage IA</div>
+                </div>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead><tr>
+                        <th>Entité</th><th>Domaine</th><th>Sujet</th>
+                        <th>Contact entité</th><th>Cas d'usage IA</th><th>État</th>
+                    </tr></thead>
+                    <tbody>
+        `;
+
+        filtered.forEach(d => {{
+            html += `<tr>
+                <td>${{d.Entité}}</td><td>${{d.Domaine}}</td><td>${{d.Sujet}}</td>
+                <td>${{d.ContactEntite}}</td><td>${{d.UsageIA}}</td><td>${{d.ETAT}}</td>
+            </tr>`;
+        }});
+
+        html += `</tbody></table></div>`;
+        document.getElementById('country-table-container').innerHTML = html;
+    }}
+
+    // ── Init page 2 ──────────────────────────────────────────────────────────
+    function initPage2() {{
+        const fill = (id, values) => {{
+            document.getElementById(id).innerHTML =
+                values.map(v => `<option value="${{v}}" ${{v === 'Tous' ? 'selected' : ''}}>${{v}}</option>`).join('');
+        }};
+
+        fill('filter-entite',    ['Tous', ...new Set(dataDetails.map(d => d.Entité))].sort());
+        fill('filter-domaine',   ['Tous', ...new Set(dataDetails.map(d => d.Domaine))].sort());
+        fill('filter-usageIA',   ['Tous', ...new Set(dataDetails.map(d => d.UsageIA))].sort());
+        fill('filter-etat',      ['Tous', ...new Set(dataDetails.map(d => d.ETAT))].sort());
+        fill('filter-evolution', ['Tous', ...new Set(dataDetails.map(d => d.Évolution_significative))].sort());
+
+        applyFilters();
+    }}
+
+    // ── Filtres ───────────────────────────────────────────────────────────────
+    function applyFilters() {{
+        const fe  = document.getElementById('filter-entite').value;
+        const fd  = document.getElementById('filter-domaine').value;
+        const fu  = document.getElementById('filter-usageIA').value;
+        const fst = document.getElementById('filter-etat').value;
+        const fev = document.getElementById('filter-evolution').value;
+        const kw  = document.getElementById('keyword-search').value.toLowerCase();
+
+        const filtered = dataDetails.filter(d => {{
+            if (fe  !== 'Tous' && d.Entité                  !== fe)  return false;
+            if (fd  !== 'Tous' && d.Domaine                 !== fd)  return false;
+            if (fu  !== 'Tous' && d.UsageIA                 !== fu)  return false;
+            if (fst !== 'Tous' && d.ETAT                    !== fst) return false;
+            if (fev !== 'Tous' && d.Évolution_significative  !== fev) return false;
+            if (kw && !Object.values(d).some(v => String(v).toLowerCase().includes(kw))) return false;
+            return true;
+        }});
+
+        document.getElementById('stat-count').textContent = filtered.length;
+
+        document.getElementById('table-body').innerHTML = filtered.map(d => `
+            <tr>
+                <td>${{d.Entité}}</td>
+                <td>${{d.Domaine}}</td>
+                <td>${{d.Sujet}}</td>
+                <td>${{d.Descriptif}}</td>
+                <td>${{d.ContactEntite}}</td>
+                <td>${{d.UsageIA}}</td>
+                <td>${{d.majRDMI}}</td>
+                <td>${{d.ETAT}}</td>
+                <td>${{d.Commentaires}}</td>
+                <td>${{d.Date_de_la_dernière_maj}}</td>
+                <td>${{d.Évolution_significative}}</td>
+                <td>${{d.Communautaire}}</td>
+                <td>${{d.Éntités_participantes_si_communautaire}}</td>
+                <td>${{d.Modalités_de_l_organisation}}</td>
+                <td>${{d.Webinar}}</td>
+            </tr>
+        `).join('');
+
+        filteredDataForAnalysis = filtered;
+
+        const hasFilter = fe !== 'Tous' || fd !== 'Tous' || fu !== 'Tous' ||
+                          fst !== 'Tous' || fev !== 'Tous' || kw !== '';
+        document.getElementById('validate-btn-container').style.display = hasFilter ? 'block' : 'none';
+    }}
+
+    // ── Valider → page 3 ─────────────────────────────────────────────────────
+    function validateSelection() {{
+        selectedFilters = {{
+            entite   : document.getElementById('filter-entite').value,
+            domaine  : document.getElementById('filter-domaine').value,
+            usageIA  : document.getElementById('filter-usageIA').value,
+            etat     : document.getElementById('filter-etat').value,
+            evolution: document.getElementById('filter-evolution').value,
+            keyword  : document.getElementById('keyword-search').value,
+            nbProjets: filteredDataForAnalysis.length
+        }};
+
+        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById('page3').classList.add('active');
+
+        document.getElementById('nb-projets-label').textContent     = filteredDataForAnalysis.length;
+        document.getElementById('user-question').value               = '';
+        document.getElementById('analyse-ia').style.display          = 'none';
+        document.getElementById('analyse-ia').textContent            = '';
+        document.getElementById('analyse-loader').style.display      = 'flex';
+        document.getElementById('analyse-titre').textContent         = '🤖 Analyse automatique';
+
+        displayFiltersSummary();
+        launchLLMAnalysis();
+    }}
+
+    // ── Résumé filtres ────────────────────────────────────────────────────────
+    function displayFiltersSummary() {{
+        const f = selectedFilters;
+        const parts = [];
+        if (f.entite    !== 'Tous') parts.push(`Entité : <b>${{f.entite}}</b>`);
+        if (f.domaine   !== 'Tous') parts.push(`Domaine : <b>${{f.domaine}}</b>`);
+        if (f.usageIA   !== 'Tous') parts.push(`Cas d'usage IA : <b>${{f.usageIA}}</b>`);
+        if (f.etat      !== 'Tous') parts.push(`État : <b>${{f.etat}}</b>`);
+        if (f.evolution !== 'Tous') parts.push(`Évolution : <b>${{f.evolution}}</b>`);
+        if (f.keyword)              parts.push(`Mot-clé : <b>"${{f.keyword}}"</b>`);
+
+        document.getElementById('filters-summary').innerHTML = parts.length
+            ? `🎯 <b>Filtres appliqués :</b> ${{parts.join(' &nbsp;|&nbsp; ')}} — <b>${{f.nbProjets}} projet(s)</b>`
+            : `🎯 Analyse globale — <b>${{f.nbProjets}} projet(s)</b>`;
+    }}
+
+    // ── Appel LLM générique ───────────────────────────────────────────────────
+    async function callLLM(prompt) {{
+        const response = await fetch(BASE_URL + "chat/completions", {{
+            method : "POST",
+            headers: {{
+                "Content-Type" : "application/json",
+                "Authorization": `Bearer ${{API_KEY}}`
+            }},
+            body: JSON.stringify({{
+                model      : MODEL,
+                max_tokens : MAX_TOKENS,
+                temperature: TEMPERATURE,
+                messages   : [{{ role: "user", content: prompt }}]
+            }})
+        }});
+        const data = await response.json();
+        return data.choices[0].message.content;
+    }}
+
+    // ── Analyse automatique ───────────────────────────────────────────────────
+    async function launchLLMAnalysis() {{
+        const prompt = `Tu es un assistant spécialisé UNIQUEMENT dans l'analyse du portefeuille de projets Data & IA de Cofidis Group.
+
+RÈGLES STRICTES :
+- Tu ne réponds QU'aux questions portant sur les données de projets fournies ci-dessous.
+- Si la question ne concerne pas ces projets (ex: météo, actualités, coding, sujets généraux), tu réponds UNIQUEMENT : "❌ Je suis limité à l'analyse des projets sélectionnés. Posez une question sur les données filtrées (entités, domaines, états, cas d'usage IA, tendances, risques...)."
+- Tu ne fais pas de suppositions sur des données absentes.
+- Tu bases ta réponse UNIQUEMENT sur les données fournies.
+
+CONTEXTE DES DONNÉES :
+- Nombre de projets sélectionnés : ${{filteredDataForAnalysis.length}}
+- Filtres appliqués :
+  · Entité : ${{selectedFilters.entite}}
+  · Domaine : ${{selectedFilters.domaine}}
+  · Cas d'usage IA : ${{selectedFilters.usageIA}}
+  · État : ${{selectedFilters.etat}}
+  · Évolution : ${{selectedFilters.evolution}}
+
+DONNÉES DES PROJETS :
+${{JSON.stringify(filteredDataForAnalysis, null, 2)}}
+
+QUESTION DE L'UTILISATEUR : ${{question}}
+
+Réponds en français, de façon claire et structurée, en te basant uniquement sur les données ci-dessus.`;
+
+        try {{
+            const texte = await callLLM(prompt);
+            document.getElementById('analyse-loader').style.display = 'none';
+            document.getElementById('analyse-ia').style.display     = 'block';
+            document.getElementById('analyse-ia').textContent       = texte;
+        }} catch(err) {{
+            document.getElementById('analyse-loader').style.display = 'none';
+            document.getElementById('analyse-ia').style.display     = 'block';
+            document.getElementById('analyse-ia').textContent       = '❌ Erreur API : ' + err.message;
+        }}
+    }}
+
+    // ── Question personnalisée ────────────────────────────────────────────────
+    async function askCustomQuestion() {{
+        const question = document.getElementById('user-question').value.trim();
+
+        if (!question) {{
+            const ta = document.getElementById('user-question');
+            ta.style.borderColor = '#e74c3c';
+            setTimeout(() => ta.style.borderColor = '#bdc3c7', 2000);
+            return;
+        }}
+
+        const btn = document.getElementById('ask-btn');
+        btn.disabled    = true;
+        btn.textContent = '⏳ En cours...';
+
+        document.getElementById('analyse-ia').style.display          = 'none';
+        document.getElementById('analyse-ia').textContent            = '';
+        document.getElementById('analyse-loader').style.display      = 'flex';
+        document.getElementById('analyse-titre').textContent         = `💬 Réponse à : "${{question}}"`;
+
+        const prompt = `Tu es un expert en analyse de portefeuille de projets IA.
+L'utilisateur a sélectionné ${{filteredDataForAnalysis.length}} projet(s) avec les filtres suivants :
+- Entité : ${{selectedFilters.entite}}
+- Domaine : ${{selectedFilters.domaine}}
+- Cas d'usage IA : ${{selectedFilters.usageIA}}
+- État : ${{selectedFilters.etat}}
+
+Voici les données des projets sélectionnés :
+${{JSON.stringify(filteredDataForAnalysis, null, 2)}}
+
+Question de l'utilisateur : ${{question}}
+
+Réponds en français, de façon claire et structurée.`;
+
+        try {{
+            const texte = await callLLM(prompt);
+            document.getElementById('analyse-loader').style.display = 'none';
+            document.getElementById('analyse-ia').style.display     = 'block';
+            document.getElementById('analyse-ia').textContent       = texte;
+        }} catch(err) {{
+            document.getElementById('analyse-loader').style.display = 'none';
+            document.getElementById('analyse-ia').style.display     = 'block';
+            document.getElementById('analyse-ia').textContent       = '❌ Erreur API : ' + err.message;
+        }} finally {{
+            btn.disabled    = false;
+            btn.textContent = '➤ Envoyer';
+        }}
+    }}
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+    createMap();
+</script>
+</body>
+</html>"""
+
+with open('dashboard_europe_demo.html', 'w', encoding='utf-8') as f:
+    f.write(html_content)
+
+print("="*70)
+print("✅  DASHBOARD HTML CRÉÉ AVEC SUCCÈS !")
+print("="*70)
+print(f"📁  Fichier : dashboard_europe_demo.html")
+print(f"🌍  {table_globale.shape[0]} projets recensés")
+print(f"🗺️  {len(liste_entites)} entités")
+print("")
+print("🚀  Ouvrez dashboard_europe_demo.html dans votre navigateur !")
+print("="*70)
