@@ -1,3 +1,223 @@
+import json
+from collections import Counter
+
+def resume_projets(projets):
+    """
+    Transforme une liste de projets en résumé structuré léger
+    pour le LLM — indépendant du nombre de projets.
+    """
+    if not projets:
+        return {}
+
+    # Comptages par dimension
+    par_entite   = dict(Counter(p.get('Entité', '')    for p in projets).most_common())
+    par_domaine  = dict(Counter(p.get('Domaine', '')   for p in projets).most_common())
+    par_etat     = dict(Counter(p.get('ETAT', '')      for p in projets).most_common())
+    par_usage_ia = dict(Counter(p.get('UsageIA', '')   for p in projets).most_common())
+    par_evolution= dict(Counter(p.get('Évolution_significative', '') for p in projets).most_common())
+
+    # Projets avec évolution significative (liste courte)
+    evolutions = [
+        {{
+            'sujet'  : p.get('Sujet', ''),
+            'entite' : p.get('Entité', ''),
+            'domaine': p.get('Domaine', ''),
+            'etat'   : p.get('ETAT', ''),
+            'comment': p.get('Commentaires', '')
+        }}
+        for p in projets
+        if str(p.get('Évolution_significative', '')).strip().lower() == 'oui'
+    ]
+
+    # Sujets et descriptifs (résumés, pas les données brutes)
+    sujets = [
+        {{
+            'sujet'   : p.get('Sujet', ''),
+            'domaine' : p.get('Domaine', ''),
+            'entite'  : p.get('Entité', ''),
+            'etat'    : p.get('ETAT', ''),
+            'usage_ia': p.get('UsageIA', '')
+        }}
+        for p in projets
+    ]
+
+    return {{
+        'nb_total'      : len(projets),
+        'par_entite'    : par_entite,
+        'par_domaine'   : par_domaine,
+        'par_etat'      : par_etat,
+        'par_usage_ia'  : par_usage_ia,
+        'par_evolution' : par_evolution,
+        'nb_evolutions' : len(evolutions),
+        'evolutions'    : evolutions,
+        'liste_sujets'  : sujets
+    }}
+
+// ── Résumé léger des données filtrées ────────────────────────────────────
+    function resumeData(projets) {{
+        const count = (arr, key) => arr.reduce((acc, p) => {{
+            const v = p[key] || 'N/A';
+            acc[v] = (acc[v] || 0) + 1;
+            return acc;
+        }}, {{}});
+
+        const evolutions = projets.filter(p =>
+            String(p.Évolution_significative || '').trim().toLowerCase() === 'oui'
+        ).map(p => ({{
+            sujet  : p.Sujet,
+            entite : p.Entité,
+            domaine: p.Domaine,
+            etat   : p.ETAT,
+            comment: p.Commentaires
+        }}));
+
+        return {{
+            nb_total     : projets.length,
+            par_entite   : count(projets, 'Entité'),
+            par_domaine  : count(projets, 'Domaine'),
+            par_etat     : count(projets, 'ETAT'),
+            par_usage_ia : count(projets, 'UsageIA'),
+            par_evolution: count(projets, 'Évolution_significative'),
+            nb_evolutions: evolutions.length,
+            evolutions   : evolutions,
+            liste_sujets : projets.map(p => ({{
+                sujet   : p.Sujet,
+                domaine : p.Domaine,
+                entite  : p.Entité,
+                etat    : p.ETAT,
+                usage_ia: p.UsageIA
+            }}))
+        }};
+    }}
+
+    // ── Appel LLM générique ───────────────────────────────────────────────────
+    async function callLLM(prompt) {{
+        const response = await fetch(BASE_URL + "chat/completions", {{
+            method : "POST",
+            headers: {{
+                "Content-Type" : "application/json",
+                "Authorization": `Bearer ${{API_KEY}}`
+            }},
+            body: JSON.stringify({{
+                model      : MODEL,
+                max_tokens : MAX_TOKENS,
+                temperature: TEMPERATURE,
+                messages   : [{{ role: "user", content: prompt }}]
+            }})
+        }});
+        const data = await response.json();
+        if (!data.choices || !data.choices[0]) {{
+            throw new Error('Réponse API vide ou invalide');
+        }}
+        return data.choices[0].message.content;
+    }}
+
+    // ── Analyse automatique ───────────────────────────────────────────────────
+    async function launchLLMAnalysis() {{
+        const resume = resumeData(filteredDataForAnalysis);
+
+        const prompt = `Tu es un expert en analyse de portefeuille de projets IA.
+Voici un résumé statistique de ${{resume.nb_total}} projet(s) sélectionnés :
+
+RÉPARTITION PAR ENTITÉ : ${{JSON.stringify(resume.par_entite)}}
+RÉPARTITION PAR DOMAINE : ${{JSON.stringify(resume.par_domaine)}}
+RÉPARTITION PAR ÉTAT : ${{JSON.stringify(resume.par_etat)}}
+RÉPARTITION PAR CAS D'USAGE IA : ${{JSON.stringify(resume.par_usage_ia)}}
+ÉVOLUTIONS SIGNIFICATIVES (${{resume.nb_evolutions}} projets) :
+${{JSON.stringify(resume.evolutions, null, 2)}}
+
+LISTE DES SUJETS :
+${{resume.liste_sujets.map(p => `- [${{p.entite}}] ${{p.sujet}} (${{p.domaine}} / ${{p.etat}})`).join('\\n')}}
+
+Fournis :
+1. Une synthèse des tendances principales
+2. Les points forts du portefeuille
+3. Les risques identifiés
+4. Des recommandations concrètes
+
+Réponds en français, de façon structurée et professionnelle.`;
+
+        try {{
+            const texte = await callLLM(prompt);
+            document.getElementById('analyse-loader').style.display = 'none';
+            document.getElementById('analyse-ia').style.display     = 'block';
+            document.getElementById('analyse-ia').textContent       = texte;
+        }} catch(err) {{
+            document.getElementById('analyse-loader').style.display = 'none';
+            document.getElementById('analyse-ia').style.display     = 'block';
+            document.getElementById('analyse-ia').textContent       = '❌ Erreur API : ' + err.message;
+        }}
+    }}
+
+    // ── Question personnalisée ────────────────────────────────────────────────
+    async function askCustomQuestion() {{
+        const question = document.getElementById('user-question').value.trim();
+
+        if (!question) {{
+            const ta = document.getElementById('user-question');
+            ta.style.borderColor = '#e74c3c';
+            setTimeout(() => ta.style.borderColor = '#bdc3c7', 2000);
+            return;
+        }}
+
+        const btn = document.getElementById('ask-btn');
+        btn.disabled    = true;
+        btn.textContent = '⏳ En cours...';
+
+        document.getElementById('analyse-ia').style.display     = 'none';
+        document.getElementById('analyse-ia').textContent       = '';
+        document.getElementById('analyse-loader').style.display = 'flex';
+        document.getElementById('analyse-titre').textContent    = `💬 Réponse à : "${{question}}"`;
+
+        const resume = resumeData(filteredDataForAnalysis);
+
+        const prompt = `Tu es un assistant spécialisé UNIQUEMENT dans l'analyse du portefeuille de projets Data & IA de Cofidis Group.
+
+RÈGLES STRICTES :
+- Tu ne réponds QU'aux questions portant sur les données de projets fournies ci-dessous.
+- Si la question ne concerne pas ces projets, réponds UNIQUEMENT : "❌ Je suis limité à l'analyse des projets sélectionnés. Posez une question sur les données filtrées."
+- Tu bases ta réponse UNIQUEMENT sur les données fournies.
+
+CONTEXTE (${{resume.nb_total}} projets) :
+RÉPARTITION PAR ENTITÉ : ${{JSON.stringify(resume.par_entite)}}
+RÉPARTITION PAR DOMAINE : ${{JSON.stringify(resume.par_domaine)}}
+RÉPARTITION PAR ÉTAT : ${{JSON.stringify(resume.par_etat)}}
+RÉPARTITION PAR CAS D'USAGE IA : ${{JSON.stringify(resume.par_usage_ia)}}
+ÉVOLUTIONS SIGNIFICATIVES : ${{JSON.stringify(resume.evolutions, null, 2)}}
+LISTE DES SUJETS :
+${{resume.liste_sujets.map(p => `- [${{p.entite}}] ${{p.sujet}} (${{p.domaine}} / ${{p.etat}})`).join('\\n')}}
+
+QUESTION : ${{question}}
+
+Réponds en français, de façon claire et structurée.`;
+
+        try {{
+            const texte = await callLLM(prompt);
+            document.getElementById('analyse-loader').style.display = 'none';
+            document.getElementById('analyse-ia').style.display     = 'block';
+            document.getElementById('analyse-ia').textContent       = texte;
+        }} catch(err) {{
+            document.getElementById('analyse-loader').style.display = 'none';
+            document.getElementById('analyse-ia').style.display     = 'block';
+            document.getElementById('analyse-ia').textContent       = '❌ Erreur API : ' + err.message;
+        }} finally {{
+            btn.disabled    = false;
+            btn.textContent = '➤ Envoyer';
+        }}
+    }}
+```
+
+---
+
+### Pourquoi ça scale bien :
+```
+10 projets   → ~800 tokens   ✅
+47 projets   → ~1 200 tokens ✅
+200 projets  → ~2 000 tokens ✅
+1000 projets → ~4 000 tokens ✅
+
+
+
 # -------------------------------------------------------------------------------------------------
 # PHASE 3 - L'APPLICATION
 # CODE HTML - CSS - JAVASCRIPT
