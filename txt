@@ -1,995 +1,317 @@
-import json
-from collections import Counter
+"""
+ingestion/excel_parser.py
+─────────────────────────
+Brique 3 — Lecture du fichier Excel de monitoring.
 
-def resume_projets(projets):
+Rôle : ouvrir le fichier Excel, identifier les sheets quinzaine,
+lire chaque sheet et retourner des DataFrames pandas bruts.
+La validation des données se fait dans normalizer.py (Brique 4).
+
+Utilisation :
+    from ingestion.excel_parser import ExcelParser
+    parser = ExcelParser("data/excel/monito.xlsx")
+    sheets = parser.parse_all()   # dict { "Q2_2025_S1": DataFrame, ... }
+"""
+
+import re
+from pathlib import Path
+
+import pandas as pd
+
+
+class ExcelParser:
     """
-    Transforme une liste de projets en résumé structuré léger
-    pour le LLM — indépendant du nombre de projets.
+    Lit un fichier Excel de monitoring et retourne les données
+    de chaque sheet quinzaine sous forme de DataFrames pandas.
     """
-    if not projets:
-        return {}
 
-    # Comptages par dimension
-    par_entite   = dict(Counter(p.get('Entité', '')    for p in projets).most_common())
-    par_domaine  = dict(Counter(p.get('Domaine', '')   for p in projets).most_common())
-    par_etat     = dict(Counter(p.get('ETAT', '')      for p in projets).most_common())
-    par_usage_ia = dict(Counter(p.get('UsageIA', '')   for p in projets).most_common())
-    par_evolution= dict(Counter(p.get('Évolution_significative', '') for p in projets).most_common())
-
-    # Projets avec évolution significative (liste courte)
-    evolutions = [
-        {{
-            'sujet'  : p.get('Sujet', ''),
-            'entite' : p.get('Entité', ''),
-            'domaine': p.get('Domaine', ''),
-            'etat'   : p.get('ETAT', ''),
-            'comment': p.get('Commentaires', '')
-        }}
-        for p in projets
-        if str(p.get('Évolution_significative', '')).strip().lower() == 'oui'
+    # Colonnes attendues dans chaque sheet quinzaine
+    # (doit correspondre à ce qu'on a défini dans le template)
+    EXPECTED_COLUMNS = [
+        "projet_id",
+        "projet_nom",
+        "domaine",
+        "phase",
+        "effectifs",
+        "responsable_principal",
+        "statut",
+        "avancement_pct",
+        "livrable_quinzaine",
+        "livrable_statut",
+        "decisions",
+        "actions_a_mener",
+        "actions_responsable",
+        "actions_echeance",
+        "risques",
+        "risque_niveau",
+        "points_blocage",
+        "commentaire_libre",
     ]
 
-    # Sujets et descriptifs (résumés, pas les données brutes)
-    sujets = [
-        {{
-            'sujet'   : p.get('Sujet', ''),
-            'domaine' : p.get('Domaine', ''),
-            'entite'  : p.get('Entité', ''),
-            'etat'    : p.get('ETAT', ''),
-            'usage_ia': p.get('UsageIA', '')
-        }}
-        for p in projets
-    ]
-
-    return {{
-        'nb_total'      : len(projets),
-        'par_entite'    : par_entite,
-        'par_domaine'   : par_domaine,
-        'par_etat'      : par_etat,
-        'par_usage_ia'  : par_usage_ia,
-        'par_evolution' : par_evolution,
-        'nb_evolutions' : len(evolutions),
-        'evolutions'    : evolutions,
-        'liste_sujets'  : sujets
-    }}
-
-// ── Résumé léger des données filtrées ────────────────────────────────────
-    function resumeData(projets) {{
-        const count = (arr, key) => arr.reduce((acc, p) => {{
-            const v = p[key] || 'N/A';
-            acc[v] = (acc[v] || 0) + 1;
-            return acc;
-        }}, {{}});
-
-        const evolutions = projets.filter(p =>
-            String(p.Évolution_significative || '').trim().toLowerCase() === 'oui'
-        ).map(p => ({{
-            sujet  : p.Sujet,
-            entite : p.Entité,
-            domaine: p.Domaine,
-            etat   : p.ETAT,
-            comment: p.Commentaires
-        }}));
-
-        return {{
-            nb_total     : projets.length,
-            par_entite   : count(projets, 'Entité'),
-            par_domaine  : count(projets, 'Domaine'),
-            par_etat     : count(projets, 'ETAT'),
-            par_usage_ia : count(projets, 'UsageIA'),
-            par_evolution: count(projets, 'Évolution_significative'),
-            nb_evolutions: evolutions.length,
-            evolutions   : evolutions,
-            liste_sujets : projets.map(p => ({{
-                sujet   : p.Sujet,
-                domaine : p.Domaine,
-                entite  : p.Entité,
-                etat    : p.ETAT,
-                usage_ia: p.UsageIA
-            }}))
-        }};
-    }}
-
-    // ── Appel LLM générique ───────────────────────────────────────────────────
-    async function callLLM(prompt) {{
-        const response = await fetch(BASE_URL + "chat/completions", {{
-            method : "POST",
-            headers: {{
-                "Content-Type" : "application/json",
-                "Authorization": `Bearer ${{API_KEY}}`
-            }},
-            body: JSON.stringify({{
-                model      : MODEL,
-                max_tokens : MAX_TOKENS,
-                temperature: TEMPERATURE,
-                messages   : [{{ role: "user", content: prompt }}]
-            }})
-        }});
-        const data = await response.json();
-        if (!data.choices || !data.choices[0]) {{
-            throw new Error('Réponse API vide ou invalide');
-        }}
-        return data.choices[0].message.content;
-    }}
-
-    // ── Analyse automatique ───────────────────────────────────────────────────
-    async function launchLLMAnalysis() {{
-        const resume = resumeData(filteredDataForAnalysis);
-
-        const prompt = `Tu es un expert en analyse de portefeuille de projets IA.
-Voici un résumé statistique de ${{resume.nb_total}} projet(s) sélectionnés :
-
-RÉPARTITION PAR ENTITÉ : ${{JSON.stringify(resume.par_entite)}}
-RÉPARTITION PAR DOMAINE : ${{JSON.stringify(resume.par_domaine)}}
-RÉPARTITION PAR ÉTAT : ${{JSON.stringify(resume.par_etat)}}
-RÉPARTITION PAR CAS D'USAGE IA : ${{JSON.stringify(resume.par_usage_ia)}}
-ÉVOLUTIONS SIGNIFICATIVES (${{resume.nb_evolutions}} projets) :
-${{JSON.stringify(resume.evolutions, null, 2)}}
-
-LISTE DES SUJETS :
-${{resume.liste_sujets.map(p => `- [${{p.entite}}] ${{p.sujet}} (${{p.domaine}} / ${{p.etat}})`).join('\\n')}}
-
-Fournis :
-1. Une synthèse des tendances principales
-2. Les points forts du portefeuille
-3. Les risques identifiés
-4. Des recommandations concrètes
-
-Réponds en français, de façon structurée et professionnelle.`;
-
-        try {{
-            const texte = await callLLM(prompt);
-            document.getElementById('analyse-loader').style.display = 'none';
-            document.getElementById('analyse-ia').style.display     = 'block';
-            document.getElementById('analyse-ia').textContent       = texte;
-        }} catch(err) {{
-            document.getElementById('analyse-loader').style.display = 'none';
-            document.getElementById('analyse-ia').style.display     = 'block';
-            document.getElementById('analyse-ia').textContent       = '❌ Erreur API : ' + err.message;
-        }}
-    }}
-
-    // ── Question personnalisée ────────────────────────────────────────────────
-    async function askCustomQuestion() {{
-        const question = document.getElementById('user-question').value.trim();
-
-        if (!question) {{
-            const ta = document.getElementById('user-question');
-            ta.style.borderColor = '#e74c3c';
-            setTimeout(() => ta.style.borderColor = '#bdc3c7', 2000);
-            return;
-        }}
-
-        const btn = document.getElementById('ask-btn');
-        btn.disabled    = true;
-        btn.textContent = '⏳ En cours...';
-
-        document.getElementById('analyse-ia').style.display     = 'none';
-        document.getElementById('analyse-ia').textContent       = '';
-        document.getElementById('analyse-loader').style.display = 'flex';
-        document.getElementById('analyse-titre').textContent    = `💬 Réponse à : "${{question}}"`;
-
-        const resume = resumeData(filteredDataForAnalysis);
-
-        const prompt = `Tu es un assistant spécialisé UNIQUEMENT dans l'analyse du portefeuille de projets Data & IA de Cofidis Group.
-
-RÈGLES STRICTES :
-- Tu ne réponds QU'aux questions portant sur les données de projets fournies ci-dessous.
-- Si la question ne concerne pas ces projets, réponds UNIQUEMENT : "❌ Je suis limité à l'analyse des projets sélectionnés. Posez une question sur les données filtrées."
-- Tu bases ta réponse UNIQUEMENT sur les données fournies.
-
-CONTEXTE (${{resume.nb_total}} projets) :
-RÉPARTITION PAR ENTITÉ : ${{JSON.stringify(resume.par_entite)}}
-RÉPARTITION PAR DOMAINE : ${{JSON.stringify(resume.par_domaine)}}
-RÉPARTITION PAR ÉTAT : ${{JSON.stringify(resume.par_etat)}}
-RÉPARTITION PAR CAS D'USAGE IA : ${{JSON.stringify(resume.par_usage_ia)}}
-ÉVOLUTIONS SIGNIFICATIVES : ${{JSON.stringify(resume.evolutions, null, 2)}}
-LISTE DES SUJETS :
-${{resume.liste_sujets.map(p => `- [${{p.entite}}] ${{p.sujet}} (${{p.domaine}} / ${{p.etat}})`).join('\\n')}}
-
-QUESTION : ${{question}}
-
-Réponds en français, de façon claire et structurée.`;
-
-        try {{
-            const texte = await callLLM(prompt);
-            document.getElementById('analyse-loader').style.display = 'none';
-            document.getElementById('analyse-ia').style.display     = 'block';
-            document.getElementById('analyse-ia').textContent       = texte;
-        }} catch(err) {{
-            document.getElementById('analyse-loader').style.display = 'none';
-            document.getElementById('analyse-ia').style.display     = 'block';
-            document.getElementById('analyse-ia').textContent       = '❌ Erreur API : ' + err.message;
-        }} finally {{
-            btn.disabled    = false;
-            btn.textContent = '➤ Envoyer';
-        }}
-    }}
-```
-
----
-
-### Pourquoi ça scale bien :
-```
-10 projets   → ~800 tokens   ✅
-47 projets   → ~1 200 tokens ✅
-200 projets  → ~2 000 tokens ✅
-1000 projets → ~4 000 tokens ✅
-
-
-
-# -------------------------------------------------------------------------------------------------
-# PHASE 3 - L'APPLICATION
-# CODE HTML - CSS - JAVASCRIPT
-
-with open('treemap.html', 'r', encoding='utf-8') as f:
-    treemap_html = f.read()
-
-with open('bar_entite.html', 'r', encoding='utf-8') as f:
-    bar_entite_html = f.read()
-
-API_KEY  = client.api_key
-BASE_URL = str(client.base_url)
-if not BASE_URL.endswith('/'):
-    BASE_URL += '/'
-
-html_content = f"""<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard Cofidis Group - Analytics 2026</title>
-    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-
-        body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #ecf0f1;
-            color: #2c3e50;
-        }}
-
-        .dashboard {{ display: flex; min-height: 100vh; }}
-
-        .sidebar {{
-            width: 300px;
-            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
-            color: white;
-            padding: 20px;
-            position: fixed;
-            height: 100vh;
-            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
-        }}
-
-        .logo {{
-            text-align: center;
-            padding: 20px 0;
-            margin-bottom: 30px;
-            border-bottom: 2px solid rgba(255,255,255,0.3);
-        }}
-
-        .logo h2 {{ margin: 0; font-size: 24px; }}
-        .logo p   {{ margin: 5px 0 0 0; opacity: 0.8; font-size: 14px; }}
-        .resized-image {{ width: 75%; height: auto; }}
-
-        .nav-title {{ font-weight: bold; margin: 20px 0 10px 0; font-size: 14px; }}
-
-        .nav-btn {{
-            width: 100%;
-            padding: 15px;
-            margin: 10px 0;
-            background: rgba(255,255,255,0.1);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 16px;
-            transition: all 0.3s;
-            text-align: left;
-        }}
-
-        .nav-btn:hover  {{ background: rgba(255,255,255,0.2); transform: translateX(5px); }}
-        .nav-btn.active {{ background: #e74c3c; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }}
-
-        .main-content {{ margin-left: 300px; padding: 30px; flex: 1; }}
-
-        .page       {{ display: none; }}
-        .page.active {{ display: block; animation: fadeIn 0.3s; }}
-
-        @keyframes fadeIn {{
-            from {{ opacity: 0; transform: translateY(10px); }}
-            to   {{ opacity: 1; transform: translateY(0); }}
-        }}
-
-        h1 {{ color: #2c3e50; margin-bottom: 25px; font-size: 32px; }}
-
-        .kpi-grid {{
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 20px;
-            margin-bottom: 30px;
-        }}
-
-        .kpi-card {{
-            color: white;
-            padding: 30px;
-            border-radius: 12px;
-            text-align: center;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-            transition: transform 0.3s;
-        }}
-
-        .kpi-card:hover  {{ transform: translateY(-5px); }}
-        .kpi-card.green  {{ background: linear-gradient(135deg, #27ae60, #27ae60dd); }}
-        .kpi-card.blue   {{ background: linear-gradient(135deg, #3498db, #3498dbdd); }}
-        .kpi-card.red    {{ background: linear-gradient(135deg, #e74c3c, #e74c3cdd); }}
-        .kpi-card.purple {{ background: linear-gradient(135deg, #9b59b6, #9b59b6dd); }}
-
-        .kpi-icon  {{ font-size: 48px; margin-bottom: 10px; }}
-        .kpi-value {{ font-size: 36px; font-weight: bold; margin-bottom: 5px; }}
-        .kpi-label {{ font-size: 14px; opacity: 0.9; }}
-
-        .card {{
-            background: white;
-            border-radius: 12px;
-            padding: 25px;
-            margin-bottom: 25px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }}
-
-        #map {{ height: 500px; }}
-
-        .table-container {{ overflow-x: auto; }}
-
-        table {{ width: 100%; border-collapse: collapse; background: white; }}
-
-        th {{
-            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
-            color: white;
-            padding: 15px;
-            text-align: left;
-            font-weight: 600;
-        }}
-
-        td {{ padding: 12px 15px; border-bottom: 1px solid #ecf0f1; }}
-        tr:nth-child(even) {{ background: #f8f9fa; }}
-        tr:hover           {{ background: #e3f2fd; }}
-
-        .filters     {{ display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap; }}
-        .filter-group {{ flex: 1; min-width: 150px; }}
-        .filter-group label {{ display: block; margin-bottom: 8px; font-weight: 600; color: #2c3e50; }}
-
-        select, input[type="text"], textarea {{
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #bdc3c7;
-            border-radius: 8px;
-            font-size: 14px;
-            font-family: inherit;
-            background: white;
-            cursor: pointer;
-        }}
-
-        select:focus, input[type="text"]:focus, textarea:focus {{
-            outline: none;
-            border-color: #3498db;
-        }}
-
-        .stats-box {{
-            display: flex;
-            gap: 20px;
-            padding: 15px;
-            background: #e3f2fd;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }}
-
-        .stat-item  {{ flex: 1; text-align: center; }}
-        .stat-value {{ font-size: 24px; font-weight: bold; color: #2c3e50; }}
-        .stat-label {{ font-size: 12px; color: #7f8c8d; margin-top: 5px; }}
-
-        .info-message       {{ text-align: center; padding: 60px; color: #7f8c8d; }}
-        .info-message .icon {{ font-size: 64px; margin-bottom: 20px; }}
-
-        .loader {{
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 40px;
-            color: #7f8c8d;
-        }}
-
-        .spinner {{
-            width: 48px;
-            height: 48px;
-            border: 5px solid #ecf0f1;
-            border-top-color: #3498db;
-            border-radius: 50%;
-            animation: spin 0.9s linear infinite;
-            margin-bottom: 16px;
-        }}
-
-        @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
-
-        .treemap-content     {{ width: 100%; height: 500px; display: flex; align-items: center; justify-content: center; }}
-        .custom-treemap-size {{ width: 900px; height: 700px; }}
-
-        @media (max-width: 1200px) {{ .kpi-grid {{ grid-template-columns: repeat(2, 1fr); }} }}
-        @media (max-width: 768px) {{
-            .sidebar      {{ width: 100%; position: relative; height: auto; }}
-            .main-content {{ margin-left: 0; }}
-            .kpi-grid     {{ grid-template-columns: 1fr; }}
-            .filters      {{ flex-direction: column; }}
-        }}
-    </style>
-</head>
-<body>
-<div class="dashboard">
-
-    <!-- ═══════════════ SIDEBAR ═══════════════ -->
-    <div class="sidebar">
-        <div class="logo">
-            <img src="logo-cofidis.png" alt="Logo COFIDIS" class="resized-image">
-            <h2>Projets Data & IA</h2>
-            <p>Mise à jour janvier 2026</p>
-        </div>
-        <div class="nav-title">NAVIGATION</div>
-        <button class="nav-btn active" onclick="showPage('page1', this)">🌐 Vue d'ensemble</button>
-        <button class="nav-btn"        onclick="showPage('page2', this)">📄 Données détaillées</button>
-        <button class="nav-btn"        onclick="showPage('page3', this)">📊 POC analyse</button>
-    </div>
-
-    <!-- ═══════════════ MAIN CONTENT ═══════════════ -->
-    <div class="main-content">
-
-        <!-- ════════════════════ PAGE 1 ════════════════════ -->
-        <div id="page1" class="page active">
-            <h1>🌐 Vue d'ensemble COFIDIS GROUP</h1>
-
-            <div class="kpi-grid">
-                <div class="kpi-card blue">
-                    <div class="kpi-icon">📁</div>
-                    <div class="kpi-value">{KPI_all_projects}</div>
-                    <div class="kpi-label">Projets au total</div>
-                </div>
-                <div class="kpi-card green">
-                    <div class="kpi-icon">🆕</div>
-                    <div class="kpi-value">0</div>
-                    <div class="kpi-label">Nouveaux projets</div>
-                </div>
-                <div class="kpi-card red">
-                    <div class="kpi-icon">📈</div>
-                    <div class="kpi-value">{str(round((nb_evolutions/KPI_all_projects)*100, 2))}%</div>
-                    <div class="kpi-label">Évolution significative sur l'ensemble des projets</div>
-                </div>
-                <div class="kpi-card purple">
-                    <div class="kpi-icon">📎</div>
-                    <div class="kpi-value">{nb_cas_IA}</div>
-                    <div class="kpi-label">Cas d'usage IA</div>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="treemap-content custom-treemap-size">
-                    {treemap_html}
-                </div>
-            </div>
-
-            <div class="card">
-                <div id="map"></div>
-            </div>
-
-            <div class="card" id="country-table-container">
-                <div class="info-message">
-                    <div class="icon">🗺️</div>
-                    <p style="font-size:18px;">Cliquez sur une entité de la carte pour voir les détails</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- ════════════════════ PAGE 2 ════════════════════ -->
-        <div id="page2" class="page">
-            <h1>📄 Données Détaillées</h1>
-
-            <div class="card">
-                <h3 style="margin-bottom:20px;">Filtres :</h3>
-                <div class="filters">
-                    <div class="filter-group">
-                        <label>🔍 Entité</label>
-                        <select id="filter-entite" onchange="applyFilters()">
-                            <option value="Tous" selected>Tous</option>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label>🔍 Domaine</label>
-                        <select id="filter-domaine" onchange="applyFilters()">
-                            <option value="Tous" selected>Tous</option>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label>🔍 Cas d'usage IA</label>
-                        <select id="filter-usageIA" onchange="applyFilters()">
-                            <option value="Tous" selected>Tous</option>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label>🔍 État</label>
-                        <select id="filter-etat" onchange="applyFilters()">
-                            <option value="Tous" selected>Tous</option>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label>🔍 Évolution significative</label>
-                        <select id="filter-evolution" onchange="applyFilters()">
-                            <option value="Tous" selected>Tous</option>
-                        </select>
-                    </div>
-                    <div class="filter-group">
-                        <label>🔍 Recherche par mots-clés</label>
-                        <input type="text" id="keyword-search" onkeyup="applyFilters()" placeholder="Rechercher...">
-                    </div>
-                </div>
-            </div>
-
-            <div class="stats-box">
-                <div class="stat-item">
-                    <div class="stat-value" id="stat-count">-</div>
-                    <div class="stat-label">📁 Projets</div>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="table-container">
-                    <table id="data-table">
-                        <thead>
-                            <tr>
-                                <th>Entité</th>
-                                <th>Domaine</th>
-                                <th>Sujet</th>
-                                <th>Descriptif</th>
-                                <th>Contact entité</th>
-                                <th>Cas d'usage IA</th>
-                                <th>Date MAJ RDMI</th>
-                                <th>État</th>
-                                <th>Commentaires</th>
-                                <th>Date dernière MAJ</th>
-                                <th>Évolution significative</th>
-                                <th>Communautaire</th>
-                                <th>Entités participantes</th>
-                                <th>Modalités organisation</th>
-                                <th>Webinar</th>
-                            </tr>
-                        </thead>
-                        <tbody id="table-body"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div id="validate-btn-container" style="display:none; text-align:center; margin-top:24px; margin-bottom:30px;">
-                <button onclick="validateSelection()" style="
-                    background: linear-gradient(135deg, #2ecc71, #27ae60);
-                    color: white;
-                    border: none;
-                    padding: 14px 36px;
-                    font-size: 16px;
-                    font-weight: 600;
-                    border-radius: 10px;
-                    cursor: pointer;
-                    box-shadow: 0 4px 15px rgba(46,204,113,0.4);
-                    transition: transform 0.2s;
-                "
-                onmouseover="this.style.transform='translateY(-2px)'"
-                onmouseout="this.style.transform=''">
-                    ✅ Valider la sélection et lancer l'analyse
-                </button>
-            </div>
-        </div>
-
-        <!-- ════════════════════ PAGE 3 ════════════════════ -->
-        <div id="page3" class="page">
-            <h1>📊 POC Analyse IA</h1>
-
-            <!-- Résumé des filtres -->
-            <div id="filters-summary" style="
-                background: #f0f9ff;
-                border-left: 4px solid #3498db;
-                border-radius: 8px;
-                padding: 16px 20px;
-                margin-bottom: 24px;
-                font-size: 14px;
-                color: #2c3e50;
-            "></div>
-
-            <!-- Question libre -->
-            <div class="card">
-                <h3 style="margin-bottom:12px;">💬 Posez votre propre question</h3>
-                <p style="color:#7f8c8d; margin-bottom:16px; font-size:14px;">
-                    Votre question portera sur les <b id="nb-projets-label">0</b> projet(s) sélectionnés.
-                </p>
-                <div style="display:flex; gap:12px; align-items:flex-start;">
-                    <textarea id="user-question" rows="3"
-                        placeholder="Ex : Quels sont les projets les plus risqués ? Quels domaines sont les plus représentés ?"
-                        style="
-                            flex: 1;
-                            padding: 12px;
-                            border: 2px solid #bdc3c7;
-                            border-radius: 8px;
-                            font-size: 14px;
-                            font-family: inherit;
-                            resize: vertical;
-                            transition: border-color 0.2s;
-                        "
-                        onfocus="this.style.borderColor='#3498db'"
-                        onblur="this.style.borderColor='#bdc3c7'">
-                    </textarea>
-                    <button onclick="askCustomQuestion()" id="ask-btn" style="
-                        background: linear-gradient(135deg, #3498db, #2980b9);
-                        color: white;
-                        border: none;
-                        padding: 12px 24px;
-                        font-size: 15px;
-                        font-weight: 600;
-                        border-radius: 8px;
-                        cursor: pointer;
-                        white-space: nowrap;
-                        box-shadow: 0 4px 12px rgba(52,152,219,0.4);
-                        transition: transform 0.2s;
-                    "
-                    onmouseover="this.style.transform='translateY(-2px)'"
-                    onmouseout="this.style.transform=''">
-                        ➤ Envoyer
-                    </button>
-                </div>
-            </div>
-
-            <!-- Résultat LLM -->
-            <div class="card">
-                <h3 style="margin-bottom:16px;" id="analyse-titre">🤖 Analyse automatique</h3>
-                <div id="analyse-loader" class="loader">
-                    <div class="spinner"></div>
-                    <p>Analyse en cours, veuillez patienter...</p>
-                </div>
-                <div id="analyse-ia" style="line-height:1.8; color:#2c3e50; white-space:pre-wrap; display:none;"></div>
-            </div>
-        </div>
-
-    </div>
-    <!-- fin .main-content -->
-
-</div>
-<!-- fin .dashboard -->
-
-<script>
-    const dataPays    = {json.dumps(data_pays)};
-    const dataDetails = {json.dumps(data_details)};
-    const dataIA      = {json.dumps(data_ia)};
-
-    const API_KEY     = "{API_KEY}";
-    const BASE_URL    = "{BASE_URL}";
-    const MODEL       = "{PARAMS['model']}";
-    const MAX_TOKENS  = {PARAMS['max_tokens']};
-    const TEMPERATURE = {PARAMS['temperature']};
-
-    let selectedFilters         = null;
-    let filteredDataForAnalysis = [];
-
-    // ── Navigation ──────────────────────────────────────────────────────────
-    function showPage(pageId, btn) {{
-        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-        document.getElementById(pageId).classList.add('active');
-        btn.classList.add('active');
-        if (pageId === 'page2') initPage2();
-    }}
-
-    // ── Carte Plotly ─────────────────────────────────────────────────────────
-    function createMap() {{
-        const mapData = [{{
-            type         : 'choropleth',
-            locationmode : 'ISO-3',
-            locations    : dataPays.code,
-            z            : dataPays.valeur,
-            text         : dataPays.pays,
-            colorscale   : 'Reds',
-            hovertemplate: '<b>%{{text}}</b><br>Projets: %{{z:,.0f}}<extra></extra>',
-            colorbar     : {{ title: 'Projets' }}
-        }}];
-
-        const layout = {{
-            title : '<b>Projets Cofidis par pays</b>',
-            geo   : {{
-                scope        : 'europe',
-                projection   : {{ type: 'natural earth' }},
-                showland     : true,
-                landcolor    : 'rgb(243,243,243)',
-                coastlinecolor: 'rgb(204,204,204)',
-                showlakes    : true,
-                lakecolor    : 'rgb(230,245,255)',
-                showcountries: true,
-                countrycolor : 'rgb(204,204,204)'
-            }},
-            margin: {{l:0, r:0, t:40, b:0}},
-            height: 500
-        }};
-
-        Plotly.newPlot('map', mapData, layout, {{displayModeBar: false}});
-
-        document.getElementById('map').on('plotly_click', function(evtData) {{
-            const point = evtData.points[0];
-            const index = dataPays.code.indexOf(point.location);
-            if (index !== -1) showCountryData(dataPays.pays[index]);
-        }});
-    }}
-
-    // ── Détail pays ──────────────────────────────────────────────────────────
-    function showCountryData(pays) {{
-        const filtered = dataDetails.filter(d => d.Entité === pays);
-        if (!filtered.length) return;
-
-        let html = `
-            <h3>📋 Projets : <span style="color:#3498db">${{pays}}</span></h3>
-            <div class="stats-box" style="margin:15px 0">
-                <div class="stat-item">
-                    <div class="stat-value" style="color:#27ae60">0</div>
-                    <div class="stat-label">Nouveaux projets</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-value" style="color:#3498db">${{filtered.length}}</div>
-                    <div class="stat-label">Projets</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-value" style="color:#e74c3c">${{dataIA[pays] ?? 0}}</div>
-                    <div class="stat-label">Cas d'usage IA</div>
-                </div>
-            </div>
-            <div class="table-container">
-                <table>
-                    <thead><tr>
-                        <th>Entité</th><th>Domaine</th><th>Sujet</th>
-                        <th>Contact entité</th><th>Cas d'usage IA</th><th>État</th>
-                    </tr></thead>
-                    <tbody>
-        `;
-
-        filtered.forEach(d => {{
-            html += `<tr>
-                <td>${{d.Entité}}</td><td>${{d.Domaine}}</td><td>${{d.Sujet}}</td>
-                <td>${{d.ContactEntite}}</td><td>${{d.UsageIA}}</td><td>${{d.ETAT}}</td>
-            </tr>`;
-        }});
-
-        html += `</tbody></table></div>`;
-        document.getElementById('country-table-container').innerHTML = html;
-    }}
-
-    // ── Init page 2 ──────────────────────────────────────────────────────────
-    function initPage2() {{
-        const fill = (id, values) => {{
-            document.getElementById(id).innerHTML =
-                values.map(v => `<option value="${{v}}" ${{v === 'Tous' ? 'selected' : ''}}>${{v}}</option>`).join('');
-        }};
-
-        fill('filter-entite',    ['Tous', ...new Set(dataDetails.map(d => d.Entité))].sort());
-        fill('filter-domaine',   ['Tous', ...new Set(dataDetails.map(d => d.Domaine))].sort());
-        fill('filter-usageIA',   ['Tous', ...new Set(dataDetails.map(d => d.UsageIA))].sort());
-        fill('filter-etat',      ['Tous', ...new Set(dataDetails.map(d => d.ETAT))].sort());
-        fill('filter-evolution', ['Tous', ...new Set(dataDetails.map(d => d.Évolution_significative))].sort());
-
-        applyFilters();
-    }}
-
-    // ── Filtres ───────────────────────────────────────────────────────────────
-    function applyFilters() {{
-        const fe  = document.getElementById('filter-entite').value;
-        const fd  = document.getElementById('filter-domaine').value;
-        const fu  = document.getElementById('filter-usageIA').value;
-        const fst = document.getElementById('filter-etat').value;
-        const fev = document.getElementById('filter-evolution').value;
-        const kw  = document.getElementById('keyword-search').value.toLowerCase();
-
-        const filtered = dataDetails.filter(d => {{
-            if (fe  !== 'Tous' && d.Entité                  !== fe)  return false;
-            if (fd  !== 'Tous' && d.Domaine                 !== fd)  return false;
-            if (fu  !== 'Tous' && d.UsageIA                 !== fu)  return false;
-            if (fst !== 'Tous' && d.ETAT                    !== fst) return false;
-            if (fev !== 'Tous' && d.Évolution_significative  !== fev) return false;
-            if (kw && !Object.values(d).some(v => String(v).toLowerCase().includes(kw))) return false;
-            return true;
-        }});
-
-        document.getElementById('stat-count').textContent = filtered.length;
-
-        document.getElementById('table-body').innerHTML = filtered.map(d => `
-            <tr>
-                <td>${{d.Entité}}</td>
-                <td>${{d.Domaine}}</td>
-                <td>${{d.Sujet}}</td>
-                <td>${{d.Descriptif}}</td>
-                <td>${{d.ContactEntite}}</td>
-                <td>${{d.UsageIA}}</td>
-                <td>${{d.majRDMI}}</td>
-                <td>${{d.ETAT}}</td>
-                <td>${{d.Commentaires}}</td>
-                <td>${{d.Date_de_la_dernière_maj}}</td>
-                <td>${{d.Évolution_significative}}</td>
-                <td>${{d.Communautaire}}</td>
-                <td>${{d.Éntités_participantes_si_communautaire}}</td>
-                <td>${{d.Modalités_de_l_organisation}}</td>
-                <td>${{d.Webinar}}</td>
-            </tr>
-        `).join('');
-
-        filteredDataForAnalysis = filtered;
-
-        const hasFilter = fe !== 'Tous' || fd !== 'Tous' || fu !== 'Tous' ||
-                          fst !== 'Tous' || fev !== 'Tous' || kw !== '';
-        document.getElementById('validate-btn-container').style.display = hasFilter ? 'block' : 'none';
-    }}
-
-    // ── Valider → page 3 ─────────────────────────────────────────────────────
-    function validateSelection() {{
-        selectedFilters = {{
-            entite   : document.getElementById('filter-entite').value,
-            domaine  : document.getElementById('filter-domaine').value,
-            usageIA  : document.getElementById('filter-usageIA').value,
-            etat     : document.getElementById('filter-etat').value,
-            evolution: document.getElementById('filter-evolution').value,
-            keyword  : document.getElementById('keyword-search').value,
-            nbProjets: filteredDataForAnalysis.length
-        }};
-
-        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-        document.getElementById('page3').classList.add('active');
-
-        document.getElementById('nb-projets-label').textContent     = filteredDataForAnalysis.length;
-        document.getElementById('user-question').value               = '';
-        document.getElementById('analyse-ia').style.display          = 'none';
-        document.getElementById('analyse-ia').textContent            = '';
-        document.getElementById('analyse-loader').style.display      = 'flex';
-        document.getElementById('analyse-titre').textContent         = '🤖 Analyse automatique';
-
-        displayFiltersSummary();
-        launchLLMAnalysis();
-    }}
-
-    // ── Résumé filtres ────────────────────────────────────────────────────────
-    function displayFiltersSummary() {{
-        const f = selectedFilters;
-        const parts = [];
-        if (f.entite    !== 'Tous') parts.push(`Entité : <b>${{f.entite}}</b>`);
-        if (f.domaine   !== 'Tous') parts.push(`Domaine : <b>${{f.domaine}}</b>`);
-        if (f.usageIA   !== 'Tous') parts.push(`Cas d'usage IA : <b>${{f.usageIA}}</b>`);
-        if (f.etat      !== 'Tous') parts.push(`État : <b>${{f.etat}}</b>`);
-        if (f.evolution !== 'Tous') parts.push(`Évolution : <b>${{f.evolution}}</b>`);
-        if (f.keyword)              parts.push(`Mot-clé : <b>"${{f.keyword}}"</b>`);
-
-        document.getElementById('filters-summary').innerHTML = parts.length
-            ? `🎯 <b>Filtres appliqués :</b> ${{parts.join(' &nbsp;|&nbsp; ')}} — <b>${{f.nbProjets}} projet(s)</b>`
-            : `🎯 Analyse globale — <b>${{f.nbProjets}} projet(s)</b>`;
-    }}
-
-    // ── Appel LLM générique ───────────────────────────────────────────────────
-    async function callLLM(prompt) {{
-        const response = await fetch(BASE_URL + "chat/completions", {{
-            method : "POST",
-            headers: {{
-                "Content-Type" : "application/json",
-                "Authorization": `Bearer ${{API_KEY}}`
-            }},
-            body: JSON.stringify({{
-                model      : MODEL,
-                max_tokens : MAX_TOKENS,
-                temperature: TEMPERATURE,
-                messages   : [{{ role: "user", content: prompt }}]
-            }})
-        }});
-        const data = await response.json();
-        return data.choices[0].message.content;
-    }}
-
-    // ── Analyse automatique ───────────────────────────────────────────────────
-    async function launchLLMAnalysis() {{
-        const prompt = `Tu es un assistant spécialisé UNIQUEMENT dans l'analyse du portefeuille de projets Data & IA de Cofidis Group.
-
-RÈGLES STRICTES :
-- Tu ne réponds QU'aux questions portant sur les données de projets fournies ci-dessous.
-- Si la question ne concerne pas ces projets (ex: météo, actualités, coding, sujets généraux), tu réponds UNIQUEMENT : "❌ Je suis limité à l'analyse des projets sélectionnés. Posez une question sur les données filtrées (entités, domaines, états, cas d'usage IA, tendances, risques...)."
-- Tu ne fais pas de suppositions sur des données absentes.
-- Tu bases ta réponse UNIQUEMENT sur les données fournies.
-
-CONTEXTE DES DONNÉES :
-- Nombre de projets sélectionnés : ${{filteredDataForAnalysis.length}}
-- Filtres appliqués :
-  · Entité : ${{selectedFilters.entite}}
-  · Domaine : ${{selectedFilters.domaine}}
-  · Cas d'usage IA : ${{selectedFilters.usageIA}}
-  · État : ${{selectedFilters.etat}}
-  · Évolution : ${{selectedFilters.evolution}}
-
-DONNÉES DES PROJETS :
-${{JSON.stringify(filteredDataForAnalysis, null, 2)}}
-
-QUESTION DE L'UTILISATEUR : ${{question}}
-
-Réponds en français, de façon claire et structurée, en te basant uniquement sur les données ci-dessus.`;
-
-        try {{
-            const texte = await callLLM(prompt);
-            document.getElementById('analyse-loader').style.display = 'none';
-            document.getElementById('analyse-ia').style.display     = 'block';
-            document.getElementById('analyse-ia').textContent       = texte;
-        }} catch(err) {{
-            document.getElementById('analyse-loader').style.display = 'none';
-            document.getElementById('analyse-ia').style.display     = 'block';
-            document.getElementById('analyse-ia').textContent       = '❌ Erreur API : ' + err.message;
-        }}
-    }}
-
-    // ── Question personnalisée ────────────────────────────────────────────────
-    async function askCustomQuestion() {{
-        const question = document.getElementById('user-question').value.trim();
-
-        if (!question) {{
-            const ta = document.getElementById('user-question');
-            ta.style.borderColor = '#e74c3c';
-            setTimeout(() => ta.style.borderColor = '#bdc3c7', 2000);
-            return;
-        }}
-
-        const btn = document.getElementById('ask-btn');
-        btn.disabled    = true;
-        btn.textContent = '⏳ En cours...';
-
-        document.getElementById('analyse-ia').style.display          = 'none';
-        document.getElementById('analyse-ia').textContent            = '';
-        document.getElementById('analyse-loader').style.display      = 'flex';
-        document.getElementById('analyse-titre').textContent         = `💬 Réponse à : "${{question}}"`;
-
-        const prompt = `Tu es un expert en analyse de portefeuille de projets IA.
-L'utilisateur a sélectionné ${{filteredDataForAnalysis.length}} projet(s) avec les filtres suivants :
-- Entité : ${{selectedFilters.entite}}
-- Domaine : ${{selectedFilters.domaine}}
-- Cas d'usage IA : ${{selectedFilters.usageIA}}
-- État : ${{selectedFilters.etat}}
-
-Voici les données des projets sélectionnés :
-${{JSON.stringify(filteredDataForAnalysis, null, 2)}}
-
-Question de l'utilisateur : ${{question}}
-
-Réponds en français, de façon claire et structurée.`;
-
-        try {{
-            const texte = await callLLM(prompt);
-            document.getElementById('analyse-loader').style.display = 'none';
-            document.getElementById('analyse-ia').style.display     = 'block';
-            document.getElementById('analyse-ia').textContent       = texte;
-        }} catch(err) {{
-            document.getElementById('analyse-loader').style.display = 'none';
-            document.getElementById('analyse-ia').style.display     = 'block';
-            document.getElementById('analyse-ia').textContent       = '❌ Erreur API : ' + err.message;
-        }} finally {{
-            btn.disabled    = false;
-            btn.textContent = '➤ Envoyer';
-        }}
-    }}
-
-    // ── Init ──────────────────────────────────────────────────────────────────
-    createMap();
-</script>
-</body>
-</html>"""
-
-with open('dashboard_europe_demo.html', 'w', encoding='utf-8') as f:
-    f.write(html_content)
-
-print("="*70)
-print("✅  DASHBOARD HTML CRÉÉ AVEC SUCCÈS !")
-print("="*70)
-print(f"📁  Fichier : dashboard_europe_demo.html")
-print(f"🌍  {table_globale.shape[0]} projets recensés")
-print(f"🗺️  {len(liste_entites)} entités")
-print("")
-print("🚀  Ouvrez dashboard_europe_demo.html dans votre navigateur !")
-print("="*70)
+    def __init__(self, filepath: str, sheet_pattern: str = r"^Q[1-4]_\d{4}_S[12]$"):
+        """
+        Parameters
+        ----------
+        filepath : str
+            Chemin vers le fichier Excel (.xlsx)
+        sheet_pattern : str
+            Expression régulière pour identifier les sheets quinzaine.
+            Par défaut : Q1_2025_S1, Q2_2024_S2, etc.
+        """
+        self.filepath = Path(filepath)
+        self.sheet_pattern = sheet_pattern
+        self._validate_file()  # on vérifie que le fichier existe dès le départ
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Méthode principale
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def parse_all(self) -> dict[str, pd.DataFrame]:
+        """
+        Lit toutes les sheets quinzaine du fichier Excel.
+
+        Returns
+        -------
+        dict
+            Clés   = nom de la sheet (ex: "Q2_2025_S1")
+            Valeurs = DataFrame pandas avec les données brutes de la sheet
+
+        Raises
+        ------
+        ValueError
+            Si aucune sheet quinzaine n'est trouvée dans le fichier.
+        """
+        # Récupère la liste de toutes les sheets du fichier
+        all_sheets = self._get_sheet_names()
+
+        # Filtre : garde seulement les sheets qui matchent le pattern quinzaine
+        quinzaine_sheets = [
+            s for s in all_sheets if re.match(self.sheet_pattern, s)
+        ]
+
+        if not quinzaine_sheets:
+            raise ValueError(
+                f"Aucune sheet quinzaine trouvée dans '{self.filepath}'.\n"
+                f"Pattern attendu : {self.sheet_pattern}\n"
+                f"Sheets disponibles : {all_sheets}"
+            )
+
+        print(f"  {len(quinzaine_sheets)} sheet(s) quinzaine détectée(s) : {quinzaine_sheets}")
+
+        # Lit chaque sheet et stocke le DataFrame dans un dict
+        result = {}
+        for sheet_name in sorted(quinzaine_sheets):  # trié chronologiquement
+            df = self._read_sheet(sheet_name)
+            if df is not None:
+                result[sheet_name] = df
+                print(f"  ✓ '{sheet_name}' — {len(df)} ligne(s) lue(s)")
+            else:
+                print(f"  ⚠ '{sheet_name}' — sheet vide, ignorée")
+
+        return result
+
+    def parse_sheet(self, sheet_name: str) -> pd.DataFrame:
+        """
+        Lit une seule sheet par son nom.
+
+        Parameters
+        ----------
+        sheet_name : str
+            Nom exact de la sheet (ex: "Q2_2025_S1")
+
+        Returns
+        -------
+        pd.DataFrame
+            Données brutes de la sheet.
+        """
+        return self._read_sheet(sheet_name)
+
+    def parse_meta(self, meta_sheet: str = "META") -> pd.DataFrame:
+        """
+        Lit la sheet META (référentiel des projets).
+
+        Parameters
+        ----------
+        meta_sheet : str
+            Nom de la sheet META (par défaut "META")
+
+        Returns
+        -------
+        pd.DataFrame
+            Référentiel projets, ou DataFrame vide si absent.
+        """
+        all_sheets = self._get_sheet_names()
+        if meta_sheet not in all_sheets:
+            print(f"  ⚠ Sheet '{meta_sheet}' introuvable. Référentiel ignoré.")
+            return pd.DataFrame()
+
+        # header=1 car la ligne 0 = titre fusionné, ligne 1 = vrais en-têtes
+        df = pd.read_excel(
+            self.filepath,
+            sheet_name=meta_sheet,
+            header=1,        # ligne 2 dans Excel = en-têtes réels
+        )
+        df = self._clean_dataframe(df)
+        print(f"  ✓ META — {len(df)} projet(s) dans le référentiel")
+        return df
+
+    def get_quinzaine_sheets(self) -> list[str]:
+        """Retourne la liste des sheets quinzaine disponibles, triées."""
+        all_sheets = self._get_sheet_names()
+        return sorted([s for s in all_sheets if re.match(self.sheet_pattern, s)])
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Méthodes internes (privées, commencent par _)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _validate_file(self):
+        """Vérifie que le fichier existe et est bien un .xlsx."""
+        if not self.filepath.exists():
+            raise FileNotFoundError(
+                f"Fichier introuvable : '{self.filepath}'\n"
+                f"Vérifie que le chemin est correct."
+            )
+        if self.filepath.suffix.lower() not in [".xlsx", ".xlsm"]:
+            raise ValueError(
+                f"Format non supporté : '{self.filepath.suffix}'. "
+                f"Utilise un fichier .xlsx ou .xlsm."
+            )
+
+    def _get_sheet_names(self) -> list[str]:
+        """Retourne la liste de tous les noms de sheets du fichier."""
+        # ExcelFile permet d'accéder aux métadonnées sans charger les données
+        with pd.ExcelFile(self.filepath) as xls:
+            return xls.sheet_names
+
+    def _read_sheet(self, sheet_name: str) -> pd.DataFrame | None:
+        """
+        Lit une sheet quinzaine et retourne un DataFrame propre.
+
+        - header=1 : ignore la ligne de titre fusionné (ligne 1)
+        - skiprows=[2] : ignore la ligne de légende (ligne 3)
+        - Lignes entièrement vides supprimées
+        - Noms de colonnes normalisés (minuscules, sans espaces)
+        """
+        df = pd.read_excel(
+            self.filepath,
+            sheet_name=sheet_name,
+            header=1,        # ligne 2 dans Excel = en-têtes réels
+            skiprows=[2],    # ligne 3 = légende, on la saute
+        )
+
+        df = self._clean_dataframe(df)
+
+        # Si le DataFrame est vide après nettoyage, on retourne None
+        if df.empty:
+            return None
+
+        # Ajoute une colonne "quinzaine" pour tracer l'origine des données
+        df["quinzaine"] = sheet_name
+
+        # Extrait l'année et le numéro de quinzaine depuis le nom de la sheet
+        # Ex: "Q2_2025_S1" → annee=2025, num_quinzaine=3 (Q2 S1 = 3ème quinzaine)
+        df["annee"], df["num_quinzaine"] = self._extract_period(sheet_name)
+
+        return df
+
+    def _clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Nettoie un DataFrame brut issu de pandas.read_excel :
+        - Supprime les lignes entièrement vides
+        - Normalise les noms de colonnes
+        - Supprime les espaces en trop dans les valeurs texte
+        - Remplace les valeurs NaN par None (plus pratique en Python)
+        """
+        # Supprime les lignes où TOUTES les colonnes sont vides
+        df = df.dropna(how="all").reset_index(drop=True)
+
+        # Normalise les noms de colonnes :
+        # "Nom du projet " → "nom_du_projet"
+        df.columns = (
+            df.columns
+            .str.strip()           # supprime espaces début/fin
+            .str.lower()           # met en minuscules
+            .str.replace(" ", "_") # remplace espaces par underscores
+            .str.replace(r"[^\w]", "_", regex=True)  # caractères spéciaux → _
+            .str.replace(r"_+", "_", regex=True)      # double underscores → un seul
+            .str.strip("_")        # supprime underscores en début/fin
+        )
+
+        # Supprime les espaces en trop dans les colonnes texte (str)
+        for col in df.select_dtypes(include=["object", "string"]).columns:
+            df[col] = df[col].astype(str).str.strip()
+            # Remplace les "nan" (chaîne) par None
+            df[col] = df[col].replace("nan", None)
+
+        return df
+
+    def _extract_period(self, sheet_name: str) -> tuple[int, int]:
+        """
+        Extrait l'année et le numéro de quinzaine depuis le nom de la sheet.
+
+        Exemples :
+            "Q1_2025_S1" → (2025, 1)   1ère quinzaine de l'année
+            "Q1_2025_S2" → (2025, 2)   2ème quinzaine
+            "Q2_2025_S1" → (2025, 3)   3ème quinzaine
+            "Q4_2025_S2" → (2025, 8)   8ème et dernière quinzaine
+
+        Returns
+        -------
+        tuple (annee: int, num_quinzaine: int)
+        """
+        # Pattern : Q{trimestre}_{annee}_S{semaine_dans_trimestre}
+        match = re.match(r"Q(\d)_(\d{4})_S(\d)", sheet_name)
+        if not match:
+            return (0, 0)  # fallback si le pattern ne matche pas
+
+        trimestre = int(match.group(1))   # 1, 2, 3 ou 4
+        annee     = int(match.group(2))   # ex: 2025
+        semaine   = int(match.group(3))   # 1 ou 2
+
+        # Chaque trimestre a 2 quinzaines → num global = (trimestre-1)*2 + semaine
+        num_quinzaine = (trimestre - 1) * 2 + semaine
+
+        return annee, num_quinzaine
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test rapide — lance ce fichier directement pour vérifier que ça marche
+# python ingestion/excel_parser.py
+# ─────────────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    import sys
+
+    # Chemin par défaut : on cherche le template qu'on a créé en Brique 1
+    filepath = sys.argv[1] if len(sys.argv) > 1 else "data/excel/monito_template.xlsx"
+
+    print(f"\n{'='*55}")
+    print(f"  Test ExcelParser")
+    print(f"  Fichier : {filepath}")
+    print(f"{'='*55}\n")
+
+    parser = ExcelParser(filepath)
+
+    print("── Sheets disponibles ──────────────────────────────────")
+    print(f"  Toutes       : {parser._get_sheet_names()}")
+    print(f"  Quinzaines   : {parser.get_quinzaine_sheets()}")
+
+    print("\n── Lecture META ────────────────────────────────────────")
+    meta = parser.parse_meta()
+    if not meta.empty:
+        print(meta.iloc[:, :3].to_string(index=False))
+
+    print("\n── Lecture sheets quinzaine ────────────────────────────")
+    sheets = parser.parse_all()
+
+    for name, df in sheets.items():
+        print(f"\n  Sheet : {name}")
+        print(f"  Colonnes : {list(df.columns)}")
+        print(f"  Lignes   : {len(df)}")
+        print(f"  Aperçu   :")
+        cols_apercu = ["projet_id", "projet_nom", "statut", "avancement_pct", "quinzaine"]
+        cols_ok = [c for c in cols_apercu if c in df.columns]
+        print(df[cols_ok].to_string(index=False))
+
+    print(f"\n{'='*55}")
+    print("  ExcelParser OK")
+    print(f"{'='*55}\n")
