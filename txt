@@ -1,317 +1,120 @@
-"""
-ingestion/excel_parser.py
-─────────────────────────
-Brique 3 — Lecture du fichier Excel de monitoring.
+# ═══════════════════════════════════════════════════════════════════════════════
+# config.yaml — Configuration centrale de Project Intelligence
+# Modifie ce fichier selon ton environnement. Ne jamais mettre de mots de passe
+# ici : utilise le fichier .env pour les secrets (voir section llm ci-dessous)
+# ═══════════════════════════════════════════════════════════════════════════════
 
-Rôle : ouvrir le fichier Excel, identifier les sheets quinzaine,
-lire chaque sheet et retourner des DataFrames pandas bruts.
-La validation des données se fait dans normalizer.py (Brique 4).
+# ── Chemins ───────────────────────────────────────────────────────────────────
+paths:
+  # Dossier où tu déposes les fichiers Excel de monitoring
+  excel_input:    "data/excel/"
 
-Utilisation :
-    from ingestion.excel_parser import ExcelParser
-    parser = ExcelParser("data/excel/monito.xlsx")
-    sheets = parser.parse_all()   # dict { "Q2_2025_S1": DataFrame, ... }
-"""
+  # Base DuckDB (fichier local, créé automatiquement au premier lancement)
+  duckdb:         "data/storage/monito.duckdb"
 
-import re
-from pathlib import Path
+  # Dossier de la base vectorielle ChromaDB
+  chroma:         "data/storage/chroma/"
 
-import pandas as pd
+  # Fichiers Parquet de sauvegarde (backup des données structurées)
+  parquet:        "data/storage/parquet/"
 
+  # Templates HTML pour la génération PDF
+  templates:      "templates/"
 
-class ExcelParser:
-    """
-    Lit un fichier Excel de monitoring et retourne les données
-    de chaque sheet quinzaine sous forme de DataFrames pandas.
-    """
+  # PDF générés
+  pdf_output:     "data/outputs/pdf/"
 
-    # Colonnes attendues dans chaque sheet quinzaine
-    # (doit correspondre à ce qu'on a défini dans le template)
-    EXPECTED_COLUMNS = [
-        "projet_id",
-        "projet_nom",
-        "domaine",
-        "phase",
-        "effectifs",
-        "responsable_principal",
-        "statut",
-        "avancement_pct",
-        "livrable_quinzaine",
-        "livrable_statut",
-        "decisions",
-        "actions_a_mener",
-        "actions_responsable",
-        "actions_echeance",
-        "risques",
-        "risque_niveau",
-        "points_blocage",
-        "commentaire_libre",
-    ]
-
-    def __init__(self, filepath: str, sheet_pattern: str = r"^Q[1-4]_\d{4}_S[12]$"):
-        """
-        Parameters
-        ----------
-        filepath : str
-            Chemin vers le fichier Excel (.xlsx)
-        sheet_pattern : str
-            Expression régulière pour identifier les sheets quinzaine.
-            Par défaut : Q1_2025_S1, Q2_2024_S2, etc.
-        """
-        self.filepath = Path(filepath)
-        self.sheet_pattern = sheet_pattern
-        self._validate_file()  # on vérifie que le fichier existe dès le départ
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Méthode principale
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def parse_all(self) -> dict[str, pd.DataFrame]:
-        """
-        Lit toutes les sheets quinzaine du fichier Excel.
-
-        Returns
-        -------
-        dict
-            Clés   = nom de la sheet (ex: "Q2_2025_S1")
-            Valeurs = DataFrame pandas avec les données brutes de la sheet
-
-        Raises
-        ------
-        ValueError
-            Si aucune sheet quinzaine n'est trouvée dans le fichier.
-        """
-        # Récupère la liste de toutes les sheets du fichier
-        all_sheets = self._get_sheet_names()
-
-        # Filtre : garde seulement les sheets qui matchent le pattern quinzaine
-        quinzaine_sheets = [
-            s for s in all_sheets if re.match(self.sheet_pattern, s)
-        ]
-
-        if not quinzaine_sheets:
-            raise ValueError(
-                f"Aucune sheet quinzaine trouvée dans '{self.filepath}'.\n"
-                f"Pattern attendu : {self.sheet_pattern}\n"
-                f"Sheets disponibles : {all_sheets}"
-            )
-
-        print(f"  {len(quinzaine_sheets)} sheet(s) quinzaine détectée(s) : {quinzaine_sheets}")
-
-        # Lit chaque sheet et stocke le DataFrame dans un dict
-        result = {}
-        for sheet_name in sorted(quinzaine_sheets):  # trié chronologiquement
-            df = self._read_sheet(sheet_name)
-            if df is not None:
-                result[sheet_name] = df
-                print(f"  ✓ '{sheet_name}' — {len(df)} ligne(s) lue(s)")
-            else:
-                print(f"  ⚠ '{sheet_name}' — sheet vide, ignorée")
-
-        return result
-
-    def parse_sheet(self, sheet_name: str) -> pd.DataFrame:
-        """
-        Lit une seule sheet par son nom.
-
-        Parameters
-        ----------
-        sheet_name : str
-            Nom exact de la sheet (ex: "Q2_2025_S1")
-
-        Returns
-        -------
-        pd.DataFrame
-            Données brutes de la sheet.
-        """
-        return self._read_sheet(sheet_name)
-
-    def parse_meta(self, meta_sheet: str = "META") -> pd.DataFrame:
-        """
-        Lit la sheet META (référentiel des projets).
-
-        Parameters
-        ----------
-        meta_sheet : str
-            Nom de la sheet META (par défaut "META")
-
-        Returns
-        -------
-        pd.DataFrame
-            Référentiel projets, ou DataFrame vide si absent.
-        """
-        all_sheets = self._get_sheet_names()
-        if meta_sheet not in all_sheets:
-            print(f"  ⚠ Sheet '{meta_sheet}' introuvable. Référentiel ignoré.")
-            return pd.DataFrame()
-
-        # header=1 car la ligne 0 = titre fusionné, ligne 1 = vrais en-têtes
-        df = pd.read_excel(
-            self.filepath,
-            sheet_name=meta_sheet,
-            header=1,        # ligne 2 dans Excel = en-têtes réels
-        )
-        df = self._clean_dataframe(df)
-        print(f"  ✓ META — {len(df)} projet(s) dans le référentiel")
-        return df
-
-    def get_quinzaine_sheets(self) -> list[str]:
-        """Retourne la liste des sheets quinzaine disponibles, triées."""
-        all_sheets = self._get_sheet_names()
-        return sorted([s for s in all_sheets if re.match(self.sheet_pattern, s)])
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Méthodes internes (privées, commencent par _)
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def _validate_file(self):
-        """Vérifie que le fichier existe et est bien un .xlsx."""
-        if not self.filepath.exists():
-            raise FileNotFoundError(
-                f"Fichier introuvable : '{self.filepath}'\n"
-                f"Vérifie que le chemin est correct."
-            )
-        if self.filepath.suffix.lower() not in [".xlsx", ".xlsm"]:
-            raise ValueError(
-                f"Format non supporté : '{self.filepath.suffix}'. "
-                f"Utilise un fichier .xlsx ou .xlsm."
-            )
-
-    def _get_sheet_names(self) -> list[str]:
-        """Retourne la liste de tous les noms de sheets du fichier."""
-        # ExcelFile permet d'accéder aux métadonnées sans charger les données
-        with pd.ExcelFile(self.filepath) as xls:
-            return xls.sheet_names
-
-    def _read_sheet(self, sheet_name: str) -> pd.DataFrame | None:
-        """
-        Lit une sheet quinzaine et retourne un DataFrame propre.
-
-        - header=1 : ignore la ligne de titre fusionné (ligne 1)
-        - skiprows=[2] : ignore la ligne de légende (ligne 3)
-        - Lignes entièrement vides supprimées
-        - Noms de colonnes normalisés (minuscules, sans espaces)
-        """
-        df = pd.read_excel(
-            self.filepath,
-            sheet_name=sheet_name,
-            header=1,        # ligne 2 dans Excel = en-têtes réels
-            skiprows=[2],    # ligne 3 = légende, on la saute
-        )
-
-        df = self._clean_dataframe(df)
-
-        # Si le DataFrame est vide après nettoyage, on retourne None
-        if df.empty:
-            return None
-
-        # Ajoute une colonne "quinzaine" pour tracer l'origine des données
-        df["quinzaine"] = sheet_name
-
-        # Extrait l'année et le numéro de quinzaine depuis le nom de la sheet
-        # Ex: "Q2_2025_S1" → annee=2025, num_quinzaine=3 (Q2 S1 = 3ème quinzaine)
-        df["annee"], df["num_quinzaine"] = self._extract_period(sheet_name)
-
-        return df
-
-    def _clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Nettoie un DataFrame brut issu de pandas.read_excel :
-        - Supprime les lignes entièrement vides
-        - Normalise les noms de colonnes
-        - Supprime les espaces en trop dans les valeurs texte
-        - Remplace les valeurs NaN par None (plus pratique en Python)
-        """
-        # Supprime les lignes où TOUTES les colonnes sont vides
-        df = df.dropna(how="all").reset_index(drop=True)
-
-        # Normalise les noms de colonnes :
-        # "Nom du projet " → "nom_du_projet"
-        df.columns = (
-            df.columns
-            .str.strip()           # supprime espaces début/fin
-            .str.lower()           # met en minuscules
-            .str.replace(" ", "_") # remplace espaces par underscores
-            .str.replace(r"[^\w]", "_", regex=True)  # caractères spéciaux → _
-            .str.replace(r"_+", "_", regex=True)      # double underscores → un seul
-            .str.strip("_")        # supprime underscores en début/fin
-        )
-
-        # Supprime les espaces en trop dans les colonnes texte (str)
-        for col in df.select_dtypes(include=["object", "string"]).columns:
-            df[col] = df[col].astype(str).str.strip()
-            # Remplace les "nan" (chaîne) par None
-            df[col] = df[col].replace("nan", None)
-
-        return df
-
-    def _extract_period(self, sheet_name: str) -> tuple[int, int]:
-        """
-        Extrait l'année et le numéro de quinzaine depuis le nom de la sheet.
-
-        Exemples :
-            "Q1_2025_S1" → (2025, 1)   1ère quinzaine de l'année
-            "Q1_2025_S2" → (2025, 2)   2ème quinzaine
-            "Q2_2025_S1" → (2025, 3)   3ème quinzaine
-            "Q4_2025_S2" → (2025, 8)   8ème et dernière quinzaine
-
-        Returns
-        -------
-        tuple (annee: int, num_quinzaine: int)
-        """
-        # Pattern : Q{trimestre}_{annee}_S{semaine_dans_trimestre}
-        match = re.match(r"Q(\d)_(\d{4})_S(\d)", sheet_name)
-        if not match:
-            return (0, 0)  # fallback si le pattern ne matche pas
-
-        trimestre = int(match.group(1))   # 1, 2, 3 ou 4
-        annee     = int(match.group(2))   # ex: 2025
-        semaine   = int(match.group(3))   # 1 ou 2
-
-        # Chaque trimestre a 2 quinzaines → num global = (trimestre-1)*2 + semaine
-        num_quinzaine = (trimestre - 1) * 2 + semaine
-
-        return annee, num_quinzaine
+  # Fichiers de logs
+  logs:           "logs/app.log"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Test rapide — lance ce fichier directement pour vérifier que ça marche
-# python ingestion/excel_parser.py
-# ─────────────────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    import sys
+# ── Schéma Excel attendu ──────────────────────────────────────────────────────
+excel:
+  # Convention de nommage des sheets quinzaine (regex)
+  # Exemples valides : Q1_2025_S1, Q2_2024_S2
+  sheet_pattern:  "^Q[1-4]_\\d{4}_S[12]$"
 
-    # Chemin par défaut : on cherche le template qu'on a créé en Brique 1
-    filepath = sys.argv[1] if len(sys.argv) > 1 else "data/excel/monito_template.xlsx"
+  # Sheet du référentiel projets
+  meta_sheet:     "META"
 
-    print(f"\n{'='*55}")
-    print(f"  Test ExcelParser")
-    print(f"  Fichier : {filepath}")
-    print(f"{'='*55}\n")
+  # Colonnes obligatoires — le parser rejettera une ligne si l'une manque
+  required_columns:
+    - projet_id
+    - projet_nom
+    - domaine
+    - phase
+    - effectifs
+    - responsable_principal
+    - statut
+    - avancement_pct
+    - livrable_quinzaine
+    - livrable_statut
 
-    parser = ExcelParser(filepath)
+  # Valeurs autorisées par colonne (validation à l'ingestion)
+  allowed_values:
+    statut:
+      - ON_TRACK
+      - AT_RISK
+      - LATE
+      - DONE
+      - ON_HOLD
+    livrable_statut:
+      - LIVRE
+      - EN_COURS
+      - NON_LIVRE
+      - REPORTE
+    risque_niveau:
+      - FAIBLE
+      - MOYEN
+      - ELEVE
+      - CRITIQUE
+    phase:
+      - Initiation
+      - Cadrage
+      - Réalisation
+      - Recette
+      - Clôture
 
-    print("── Sheets disponibles ──────────────────────────────────")
-    print(f"  Toutes       : {parser._get_sheet_names()}")
-    print(f"  Quinzaines   : {parser.get_quinzaine_sheets()}")
 
-    print("\n── Lecture META ────────────────────────────────────────")
-    meta = parser.parse_meta()
-    if not meta.empty:
-        print(meta.iloc[:, :3].to_string(index=False))
+# ── LLM — endpoint interne ───────────────────────────────────────────────────
+# La clé API doit être dans le fichier .env : LLM_API_KEY=xxx
+# L'URL de base pointe vers votre serveur interne (compatible OpenAI)
+llm:
+  base_url:       "https://votre-llm-interne.entreprise.fr/v1"
+  model:          "votre-modele-interne"   # ex: gpt-4, mistral-7b, etc.
+  max_tokens:     2048
+  temperature:    0.1    # faible = réponses plus factuelles, moins créatives
+  timeout_sec:    30
 
-    print("\n── Lecture sheets quinzaine ────────────────────────────")
-    sheets = parser.parse_all()
 
-    for name, df in sheets.items():
-        print(f"\n  Sheet : {name}")
-        print(f"  Colonnes : {list(df.columns)}")
-        print(f"  Lignes   : {len(df)}")
-        print(f"  Aperçu   :")
-        cols_apercu = ["projet_id", "projet_nom", "statut", "avancement_pct", "quinzaine"]
-        cols_ok = [c for c in cols_apercu if c in df.columns]
-        print(df[cols_ok].to_string(index=False))
+# ── RAG (Retrieval-Augmented Generation) ─────────────────────────────────────
+rag:
+  # Modèle d'embedding pour transformer le texte en vecteurs
+  # Si votre LLM interne expose un endpoint embeddings, mettez son URL dans .env
+  # Sinon on utilise un modèle local léger (all-MiniLM-L6-v2)
+  embedding_model:  "all-MiniLM-L6-v2"    # modèle local, pas besoin d'API
 
-    print(f"\n{'='*55}")
-    print("  ExcelParser OK")
-    print(f"{'='*55}\n")
+  # Nombre de passages similaires retournés lors d'une recherche
+  top_k:            5
+
+  # Nom de la collection dans ChromaDB
+  collection_name:  "monito_projets"
+
+
+# ── Interface Dash ────────────────────────────────────────────────────────────
+app:
+  title:          "Project Intelligence"
+  host:           "0.0.0.0"    # 0.0.0.0 = accessible depuis le réseau local
+  port:           8050
+  debug:          true          # passer à false en production
+
+
+# ── PDF ───────────────────────────────────────────────────────────────────────
+pdf:
+  # Template HTML de base pour les rapports
+  default_template: "rapport_quinzaine.html"
+  # Marges en mm
+  margin_top:     15
+  margin_bottom:  15
+  margin_left:    20
+  margin_right:   20
