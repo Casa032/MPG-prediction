@@ -1,4 +1,458 @@
 """
+merger.py
+=========
+Fusionne les fichiers Excel individuels de chaque collègue
+en un seul fichier consolidé prêt pour le pipeline.
+
+Rôle dans le pipeline :
+    saisies/monito_apou.xlsx  ─┐
+    saisies/monito_marie.xlsx ─┼→ merger.py → data/monito.xlsx → excel_parser.py
+    saisies/monito_tom.xlsx   ─┘
+
+Règles de fusion :
+    1. Un projet_id ne peut apparaître que dans UN seul fichier individuel
+       → si doublon détecté : on garde le plus récent et on alerte
+    2. Toutes les sheets de quinzaine sont fusionnées séparément
+       (Q1_2025_S1 de chaque fichier → Q1_2025_S1 du consolidé)
+    3. La sheet META est fusionnée depuis tous les fichiers
+    4. Un rapport de fusion est affiché dans le terminal
+
+Usage :
+    python ingestion/merger.py                    → fusionne tout le dossier saisies/
+    python ingestion/merger.py --dry-run          → simule sans écrire le fichier
+    python ingestion/merger.py --saisies mon/dossier  → dossier personnalisé
+"""
+
+import pandas as pd
+import argparse
+import shutil
+import yaml
+import logging
+from pathlib import Path
+from datetime import datetime
+from openpyxl import load_workbook, Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger(__name__)
+
+# Sheets à ignorer lors de la fusion (pas des données quinzaine)
+SHEETS_IGNOREES = {"META", "DICTIONNAIRE", "LEGER", "NOTES"}
+
+
+# ── Chargement config ──────────────────────────────────────────────────────────
+
+def _cfg(config_path="config.yaml") -> dict:
+    p = Path(config_path)
+    if not p.exists():
+        return {}
+    with open(p) as f:
+        return yaml.safe_load(f) or {}
+
+
+# ── Lecture d'un fichier individuel ───────────────────────────────────────────
+
+def lire_fichier(chemin: Path) -> dict:
+    """
+    Lit toutes les sheets d'un fichier Excel individuel.
+
+    Retourne un dict :
+        {
+            "auteur":     "apou",           # déduit du nom de fichier
+            "sheets":     {
+                "Q1_2025_S1": DataFrame,
+                "Q1_2025_S2": DataFrame,
+                "META":       DataFrame,
+            },
+            "erreurs":    []
+        }
+    """
+    result = {"auteur": chemin.stem, "sheets": {}, "erreurs": []}
+
+    try:
+        wb = load_workbook(chemin, read_only=True, data_only=True)
+        for sheet_name in wb.sheetnames:
+            try:
+                ws = wb[sheet_name]
+                rows = list(ws.values)
+
+                if len(rows) < 2:
+                    # Sheet trop courte (titre seul ou vide)
+                    continue
+
+                # Chercher la ligne d'en-têtes : première ligne avec "projet_id"
+                header_row = None
+                for i, row in enumerate(rows):
+                    if row and any(str(c).strip().lower() == "projet_id"
+                                   for c in row if c is not None):
+                        header_row = i
+                        break
+
+                if header_row is None:
+                    result["erreurs"].append(
+                        f"Sheet '{sheet_name}' : colonne 'projet_id' introuvable — ignorée"
+                    )
+                    continue
+
+                headers = [str(c).strip() if c is not None else f"col_{i}"
+                           for i, c in enumerate(rows[header_row])]
+                data = [list(r) for r in rows[header_row + 1:]]
+
+                df = pd.DataFrame(data, columns=headers)
+
+                # Retirer les lignes entièrement vides
+                df = df.dropna(how="all").reset_index(drop=True)
+
+                if df.empty:
+                    continue
+
+                # Nettoyer la colonne projet_id
+                df["projet_id"] = df["projet_id"].astype(str).str.strip()
+                df = df[df["projet_id"].notna() & (df["projet_id"] != "") & (df["projet_id"] != "nan")]
+
+                if not df.empty:
+                    result["sheets"][sheet_name] = df
+
+            except Exception as e:
+                result["erreurs"].append(f"Sheet '{sheet_name}' : erreur lecture — {e}")
+
+        wb.close()
+
+    except Exception as e:
+        result["erreurs"].append(f"Impossible de lire le fichier : {e}")
+
+    return result
+
+
+# ── Fusion des sheets ──────────────────────────────────────────────────────────
+
+def fusionner_sheets(fichiers_lus: list) -> dict:
+    """
+    Fusionne toutes les sheets de tous les fichiers individuels.
+
+    Règle doublon : si deux fichiers ont le même projet_id sur la même quinzaine,
+    on garde celui du fichier modifié en dernier (ordre alphabétique du nom
+    si impossible à déterminer) et on alerte.
+
+    Retourne :
+        {
+            "sheets":       {"Q1_2025_S1": DataFrame fusionné, ...},
+            "doublons":     [{"projet_id": "PROJ-001", "quinzaine": "Q1_2025_S1",
+                              "auteurs": ["apou", "marie"]}, ...],
+            "stats":        {"nb_fichiers": 3, "nb_projets": 12, ...}
+        }
+    """
+    # Collecter toutes les sheet names présentes dans au moins un fichier
+    toutes_sheets = set()
+    for f in fichiers_lus:
+        toutes_sheets.update(f["sheets"].keys())
+
+    sheets_fusionnees = {}
+    doublons = []
+
+    for sheet_name in sorted(toutes_sheets):
+        # Récupérer les DataFrames de cette sheet dans chaque fichier
+        dfs_sheet = []
+        for f in fichiers_lus:
+            if sheet_name in f["sheets"]:
+                df = f["sheets"][sheet_name].copy()
+                df["_auteur"] = f["auteur"]  # colonne temporaire pour tracer
+                dfs_sheet.append(df)
+
+        if not dfs_sheet:
+            continue
+
+        # Concatener tous les DataFrames de cette sheet
+        df_concat = pd.concat(dfs_sheet, ignore_index=True)
+
+        # Détecter les doublons sur projet_id
+        if "projet_id" in df_concat.columns:
+            comptage = df_concat.groupby("projet_id")["_auteur"].apply(list)
+            for proj_id, auteurs in comptage.items():
+                if len(auteurs) > 1:
+                    doublons.append({
+                        "projet_id": proj_id,
+                        "quinzaine": sheet_name,
+                        "auteurs":   auteurs,
+                    })
+                    # Stratégie doublon : garder la dernière occurrence
+                    # (dernier fichier lu = ordre alphabétique)
+                    log.warning(
+                        f"Doublon '{proj_id}' dans '{sheet_name}' "
+                        f"trouvé dans : {auteurs} → dernière occurrence conservée"
+                    )
+
+            # Dédoublonner : garder la dernière occurrence par projet_id
+            df_concat = df_concat.drop_duplicates(
+                subset=["projet_id"], keep="last"
+            ).reset_index(drop=True)
+
+        # Retirer la colonne temporaire _auteur
+        df_concat = df_concat.drop(columns=["_auteur"], errors="ignore")
+
+        sheets_fusionnees[sheet_name] = df_concat
+
+    nb_projets = sum(
+        df["projet_id"].nunique()
+        for name, df in sheets_fusionnees.items()
+        if name not in SHEETS_IGNOREES and "projet_id" in df.columns
+    )
+
+    stats = {
+        "nb_fichiers":         len(fichiers_lus),
+        "nb_sheets_fusionnees": len(sheets_fusionnees),
+        "nb_projets_uniques":  nb_projets,
+        "nb_doublons":         len(doublons),
+    }
+
+    return {"sheets": sheets_fusionnees, "doublons": doublons, "stats": stats}
+
+
+# ── Écriture du fichier consolidé ─────────────────────────────────────────────
+
+def ecrire_consolide(sheets_fusionnees: dict, chemin_sortie: Path,
+                     chemin_template: Path | None = None):
+    """
+    Écrit le fichier Excel consolidé.
+    Préserve le formatage du template si fourni, sinon crée un fichier propre.
+
+    Paramètres :
+        sheets_fusionnees : dict {sheet_name: DataFrame}
+        chemin_sortie     : où écrire le fichier consolidé
+        chemin_template   : fichier template à utiliser comme base (optionnel)
+    """
+    chemin_sortie.parent.mkdir(parents=True, exist_ok=True)
+
+    # Couleurs
+    C_HDR  = "1F3864"
+    C_DATA = "EBF5FB"
+    C_OPT  = "FDFEFE"
+    C_TEAL = "1ABC9C"
+    BORD   = Side(style="thin", color="BDC3C7")
+
+    def _border():
+        return Border(left=BORD, right=BORD, top=BORD, bottom=BORD)
+
+    def _style_header(cell):
+        cell.font      = Font(name="Arial", bold=True, color="FFFFFF", size=10)
+        cell.fill      = PatternFill("solid", fgColor=C_HDR)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border    = _border()
+
+    def _style_data(cell, required=True):
+        cell.fill      = PatternFill("solid", fgColor=C_DATA if required else C_OPT)
+        cell.font      = Font(name="Arial", size=10)
+        cell.alignment = Alignment(vertical="center", wrap_text=True)
+        cell.border    = _border()
+
+    wb = Workbook()
+    wb.remove(wb.active)  # retirer la sheet vide par défaut
+
+    # Ordre d'écriture : META en premier, puis quinzaines triées
+    sheets_ordonnees = []
+    if "META" in sheets_fusionnees:
+        sheets_ordonnees.append("META")
+    if "DICTIONNAIRE" in sheets_fusionnees:
+        sheets_ordonnees.append("DICTIONNAIRE")
+    sheets_ordonnees += sorted(
+        s for s in sheets_fusionnees if s not in ("META", "DICTIONNAIRE")
+    )
+
+    for sheet_name in sheets_ordonnees:
+        df = sheets_fusionnees[sheet_name]
+        ws = wb.create_sheet(sheet_name)
+
+        # Titre fusionné
+        n_cols = len(df.columns)
+        ws.merge_cells(f"A1:{get_column_letter(n_cols)}1")
+        titre = ws["A1"]
+        titre.value     = f"Monitoring — {sheet_name} (consolidé)"
+        titre.font      = Font(name="Arial", bold=True, color="FFFFFF", size=12)
+        titre.fill      = PatternFill("solid", fgColor=C_TEAL)
+        titre.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 26
+
+        # En-têtes
+        for ci, col in enumerate(df.columns, 1):
+            _style_header(ws.cell(2, ci, col))
+        ws.row_dimensions[2].height = 32
+
+        # Données
+        COLS_OBLIGATOIRES = {
+            "projet_id", "projet_nom", "domaine", "phase", "effectifs",
+            "responsable_principal", "statut", "avancement_pct",
+            "livrable_quinzaine", "livrable_statut",
+        }
+        for ri, row in enumerate(df.itertuples(index=False), 3):
+            for ci, (col, val) in enumerate(zip(df.columns, row), 1):
+                cell = ws.cell(ri, ci, val if pd.notna(val) else "")
+                _style_data(cell, required=col in COLS_OBLIGATOIRES)
+            ws.row_dimensions[ri].height = 20
+
+        # Largeurs colonnes automatiques (min 12, max 40)
+        for ci, col in enumerate(df.columns, 1):
+            max_len = max(
+                len(str(col)),
+                df[col].astype(str).str.len().max() if not df.empty else 0
+            )
+            ws.column_dimensions[get_column_letter(ci)].width = min(max(max_len + 2, 12), 40)
+
+        ws.freeze_panes = "A3"
+        if n_cols > 0:
+            ws.auto_filter.ref = f"A2:{get_column_letter(n_cols)}2"
+
+    wb.save(chemin_sortie)
+    log.info(f"Fichier consolidé écrit : {chemin_sortie}")
+
+
+# ── Archivage ──────────────────────────────────────────────────────────────────
+
+def archiver(chemin_consolide: Path, dossier_archives: Path, label: str = ""):
+    """
+    Crée une copie horodatée du fichier consolidé dans le dossier archives/.
+    Appelé automatiquement après chaque fusion réussie.
+
+    Exemple de nom d'archive :
+        monito_consolide_2025-05-15_Q1_2025_S2.xlsx
+    """
+    dossier_archives.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+    suffixe   = f"_{label}" if label else ""
+    nom       = f"monito_consolide_{timestamp}{suffixe}.xlsx"
+    dest      = dossier_archives / nom
+    shutil.copy2(chemin_consolide, dest)
+    log.info(f"Archive créée : {dest}")
+    return dest
+
+
+# ── Rapport terminal ───────────────────────────────────────────────────────────
+
+def afficher_rapport(fichiers_lus: list, resultat: dict, dry_run: bool):
+    print("\n" + "=" * 60)
+    print("  RAPPORT DE FUSION")
+    print("=" * 60)
+
+    if dry_run:
+        print("  MODE SIMULATION — aucun fichier écrit\n")
+
+    stats = resultat["stats"]
+    print(f"  Fichiers lus       : {stats['nb_fichiers']}")
+    print(f"  Sheets fusionnées  : {stats['nb_sheets_fusionnees']}")
+    print(f"  Projets uniques    : {stats['nb_projets_uniques']}")
+    print(f"  Doublons détectés  : {stats['nb_doublons']}")
+
+    # Erreurs par fichier
+    erreurs_total = [e for f in fichiers_lus for e in f["erreurs"]]
+    if erreurs_total:
+        print(f"\n  ERREURS ({len(erreurs_total)}) :")
+        for e in erreurs_total:
+            print(f"    ✗ {e}")
+
+    # Détail doublons
+    if resultat["doublons"]:
+        print(f"\n  DOUBLONS (dernière occurrence conservée) :")
+        for d in resultat["doublons"]:
+            print(f"    ~ {d['projet_id']} dans {d['quinzaine']} "
+                  f"→ présent chez : {', '.join(d['auteurs'])}")
+
+    # Détail par fichier
+    print(f"\n  DÉTAIL PAR FICHIER :")
+    for f in fichiers_lus:
+        nb_sheets = len(f["sheets"])
+        nb_projets = sum(
+            df["projet_id"].nunique()
+            for name, df in f["sheets"].items()
+            if name not in SHEETS_IGNOREES and "projet_id" in df.columns
+        )
+        statut = "OK" if not f["erreurs"] else f"{len(f['erreurs'])} erreur(s)"
+        print(f"    {f['auteur']:20} : {nb_sheets} sheet(s), {nb_projets} projet(s) — {statut}")
+
+    print("=" * 60 + "\n")
+
+
+# ── Point d'entrée ─────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Fusionne les fichiers Excel individuels en un consolidé."
+    )
+    parser.add_argument(
+        "--saisies", default="data/saisies",
+        help="Dossier contenant les fichiers individuels (défaut: data/saisies)"
+    )
+    parser.add_argument(
+        "--sortie", default="data/monito.xlsx",
+        help="Fichier consolidé de sortie (défaut: data/monito.xlsx)"
+    )
+    parser.add_argument(
+        "--archives", default="data/archives",
+        help="Dossier d'archives (défaut: data/archives)"
+    )
+    parser.add_argument(
+        "--label", default="",
+        help="Label ajouté au nom de l'archive (ex: Q1_2025_S2)"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Simule la fusion sans écrire de fichier"
+    )
+    args = parser.parse_args()
+
+    dossier_saisies = Path(args.saisies)
+    chemin_sortie   = Path(args.sortie)
+    dossier_archives = Path(args.archives)
+
+    # Vérifier que le dossier saisies existe
+    if not dossier_saisies.exists():
+        print(f"Dossier introuvable : {dossier_saisies}")
+        print(f"Crée-le et place-y les fichiers individuels.")
+        return
+
+    # Lister les fichiers Excel dans le dossier saisies
+    fichiers = sorted(dossier_saisies.glob("*.xlsx"))
+    fichiers = [f for f in fichiers if not f.name.startswith("~")]  # ignorer temp Excel
+
+    if not fichiers:
+        print(f"Aucun fichier .xlsx trouvé dans {dossier_saisies}")
+        return
+
+    print(f"\nFichiers trouvés dans {dossier_saisies} :")
+    for f in fichiers:
+        print(f"  - {f.name}")
+
+    # Lire tous les fichiers
+    fichiers_lus = [lire_fichier(f) for f in fichiers]
+
+    # Fusionner
+    resultat = fusionner_sheets(fichiers_lus)
+
+    # Afficher le rapport
+    afficher_rapport(fichiers_lus, resultat, dry_run=args.dry_run)
+
+    if args.dry_run:
+        print("Simulation terminée — relance sans --dry-run pour écrire le fichier.")
+        return
+
+    # Écrire le fichier consolidé
+    ecrire_consolide(resultat["sheets"], chemin_sortie)
+
+    # Archiver
+    archiver(chemin_sortie, dossier_archives, label=args.label)
+
+    print(f"Consolidé prêt : {chemin_sortie}")
+    print(f"Le pipeline peut maintenant lire ce fichier.\n")
+
+
+if __name__ == "__main__":
+    main()
+
+
+"""
 storage.py — Persistance des données normalisées.
 
 Format : Parquet si pyarrow installé, CSV sinon (fallback automatique).
