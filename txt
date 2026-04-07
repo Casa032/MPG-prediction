@@ -1,3 +1,29 @@
+
+let
+    Leaders = List.Distinct([Table][Leader]),
+    Valeurs = List.Transform(Leaders, each 
+        Text.From(List.First(Table.SelectRows([Table], (r) => r[Leader] = _)[date]))
+    ),
+    DateUnique = List.Count(List.Distinct(Valeurs)) = 1
+in
+    if DateUnique 
+    then List.First(Valeurs)
+    else Text.Combine(
+        List.Transform(Leaders, each 
+            "(" & _ & ") " & Text.From(List.First(Table.SelectRows([Table], (r) => r[Leader] = _)[date]))
+        ), 
+        " | "
+    )
+
+
+
+
+
+
+
+
+
+
 """
 merger.py
 =========
