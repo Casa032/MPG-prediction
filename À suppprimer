@@ -1,0 +1,37 @@
+Private Sub Workbook_NewSheet(ByVal Sh As Object)
+
+    Dim lastName As String
+    Dim parts() As String
+    Dim trimestre As Integer
+    Dim annee As Integer
+    Dim semaine As Integer
+    
+    ' Récupère la feuille précédente
+    lastName = Sheets(Sheets.Count - 1).Name
+    
+    ' Découpe le nom (T1_2026_S1)
+    parts = Split(lastName, "_")
+    
+    trimestre = Replace(parts(0), "T", "")
+    annee = parts(1)
+    semaine = Replace(parts(2), "S", "")
+    
+    ' Incrément semaine
+    semaine = semaine + 1
+    
+    ' Si semaine > 13 → nouveau trimestre
+    If semaine > 13 Then
+        semaine = 1
+        trimestre = trimestre + 1
+    End If
+    
+    ' Si trimestre > 4 → nouvelle année
+    If trimestre > 4 Then
+        trimestre = 1
+        annee = annee + 1
+    End If
+    
+    ' Nouveau nom
+    Sh.Name = "T" & trimestre & "_" & annee & "_S" & semaine
+
+End Sub
