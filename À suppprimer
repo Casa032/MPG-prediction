@@ -1,3 +1,63 @@
+
+Private Sub Workbook_NewSheet(ByVal Sh As Object)
+
+    Dim ws As Worksheet
+    Dim parts() As String
+    Dim trimestre As Integer, annee As Integer, semaine As Integer
+    Dim maxT As Integer, maxA As Integer, maxS As Integer
+    Dim tmpT As Integer, tmpA As Integer, tmpS As Integer
+
+    maxT = 1: maxA = 0: maxS = 0
+
+    ' Trouver la "dernière" logique feuille
+    For Each ws In ThisWorkbook.Worksheets
+
+        On Error Resume Next
+        parts = Split(ws.Name, "_")
+
+        If UBound(parts) = 2 Then
+            tmpT = Val(Replace(parts(0), "T", ""))
+            tmpA = Val(parts(1))
+            tmpS = Val(Replace(parts(2), "S", ""))
+
+            ' Comparaison logique (année > trimestre > semaine)
+            If tmpA > maxA _
+            Or (tmpA = maxA And tmpT > maxT) _
+            Or (tmpA = maxA And tmpT = maxT And tmpS > maxS) Then
+
+                maxA = tmpA
+                maxT = tmpT
+                maxS = tmpS
+
+            End If
+        End If
+
+        On Error GoTo 0
+    Next ws
+
+    trimestre = maxT
+    annee = maxA
+    semaine = maxS + 1
+
+    ' gestion semaine > 13
+    If semaine > 13 Then
+        semaine = 1
+        trimestre = trimestre + 1
+    End If
+
+    ' gestion trimestre > 4
+    If trimestre > 4 Then
+        trimestre = 1
+        annee = annee + 1
+    End If
+
+    Sh.Name = "T" & trimestre & "_" & annee & "_S" & semaine
+
+End Sub
+
+
+
+
 Private Sub Workbook_NewSheet(ByVal Sh As Object)
 
     Dim lastName As String
