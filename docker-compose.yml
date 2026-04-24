@@ -1,0 +1,29 @@
+version: "3.9"
+
+services:
+  project-intelligence:
+    build: .
+    container_name: project-intelligence
+    restart: unless-stopped          # redémarre automatiquement après reboot
+
+    volumes:
+      # Fiches Excel sur le réseau → montées en lecture seule dans le conteneur
+      - //serveur/partage/Monitoring/Fiches_individuelles:/app/Monitoring/Fiches_individuelles:ro
+
+      # Parquet et sorties → persistants sur la machine hôte
+      - ./storage:/app/storage
+      - ./frontend:/app/frontend
+      - ./reporting/output:/app/reporting/output
+      - ./logs:/app/logs
+
+      # Config → modifiable sans rebuild
+      - ./config.yaml:/app/config.yaml:ro
+
+    environment:
+      - TZ=Europe/Paris              # fuseau horaire pour les heures planifiées
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
