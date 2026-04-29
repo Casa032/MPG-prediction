@@ -1,34 +1,63 @@
+
+
 Private Sub Worksheet_Change(ByVal Target As Range)
 
-    Dim OldValue As String
-    Dim NewValue As String
+    ' === CONFIGURATION ===
+    Dim celluleCible As String
+    celluleCible = "B2"
 
-    ' Limite à la cellule A1 (à adapter)
-    If Target.Address = "$A$1" Then
-        
-        Application.EnableEvents = False
-        
-        NewValue = Target.Value
-        Application.Undo
-        OldValue = Target.Value
-        
-        ' Si vide → on met la nouvelle valeur
-        If OldValue = "" Then
-            Target.Value = NewValue
-        Else
-            ' Évite les doublons
-            If InStr(1, OldValue, NewValue) = 0 Then
-                Target.Value = OldValue & ", " & NewValue
-            Else
-                Target.Value = OldValue
-            End If
-        End If
-        
-        Application.EnableEvents = True
+    Dim maListe() As String
+    maListe = Split("Paris,Lyon,Marseille,Bordeaux,Toulouse,Nantes,Strasbourg,Nice", ",")
+    ' ← Modifiez uniquement cette ligne pour changer vos éléments
+    ' =====================
+
+    Dim separateur As String
+    separateur = ", "
+
+    If Target.Address <> Range(celluleCible).Address Then Exit Sub
+
+    Application.EnableEvents = False
+
+    Dim nouvelleValeur As String
+    Dim valeurActuelle As String
+    Dim valeurFinale As String
+
+    nouvelleValeur = Target.Value
+    Application.Undo
+    valeurActuelle = Target.Value
+
+    If valeurActuelle = "" Then
+        valeurFinale = nouvelleValeur
+    ElseIf InStr(separateur & valeurActuelle & separateur, separateur & nouvelleValeur & separateur) > 0 Then
+        valeurFinale = valeurActuelle
+        valeurFinale = Replace(valeurFinale, nouvelleValeur & separateur, "")
+        valeurFinale = Replace(valeurFinale, separateur & nouvelleValeur, "")
+        valeurFinale = Replace(valeurFinale, nouvelleValeur, "")
+    Else
+        valeurFinale = valeurActuelle & separateur & nouvelleValeur
     End If
+
+    Target.Value = valeurFinale
+    Application.EnableEvents = True
 
 End Sub
 
+Sub CreerListeDeroulante()
+
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Sheets("Feuil1") ' ← Nom de votre feuille
+
+    With ws.Range("B2").Validation
+        .Delete
+        .Add Type:=xlValidateList, _
+             AlertStyle:=xlValidAlertStop, _
+             Formula1:="Paris,Lyon,Marseille,Bordeaux,Toulouse,Nantes,Strasbourg,Nice"
+             ' ← Mêmes éléments qu'au-dessus
+    End With
+
+    MsgBox "Liste déroulante créée !"
+
+End Sub
 
 
 
