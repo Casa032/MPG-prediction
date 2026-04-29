@@ -1,14 +1,14 @@
-' ========================================
-' À coller dans le module de la feuille
-' ========================================
+// dans la feuille 
+
+
 Private Sub Worksheet_Change(ByVal Target As Range)
 
-    ' === CONFIGURATION ===
+   
     Dim plageCible As Range
-    Set plageCible = Range("B2:B1000")
+    Set plageCible = Range("H2:H1000")
     Dim separateur As String
     separateur = ", "
-    ' =====================
+    
 
     If Intersect(Target, plageCible) Is Nothing Then Exit Sub
     If Target.Cells.Count > 1 Then Exit Sub
@@ -44,188 +44,26 @@ Nettoyage:
 End Sub
 
 
-' ========================================
-' À coller dans un Module standard (Alt+F11 → Insertion → Module)
-' Lancer UNE SEULE FOIS via Alt+F8
-' ========================================
+//dans un module séparé
 Sub CreerListeDeroulante()
 
-    ' === VOTRE LISTE ICI ===
+   
     Dim maListe As String
-    maListe = "Paris,Lyon,Marseille,Bordeaux,Toulouse,Nantes,Strasbourg,Nice"
-    ' ← Modifiez uniquement cette ligne
-    ' =======================
+    maListe = "Cofidis GROUP,Cofidis France, Cofidis Belgique, Cofidis Espagne, Synergie, Monabanq, Créatis"
+   
 
     Dim ws As Worksheet
-    Set ws = ThisWorkbook.Sheets("Feuil1")  ' ← Nom de votre feuille
+    Set ws = ThisWorkbook.Sheets("Referentiel")
 
-    With ws.Range("B2:B1000").Validation
+    With ws.Range("H2:H1000").Validation
         .Delete
         .Add Type:=xlValidateList, _
              AlertStyle:=xlValidAlertStop, _
              Formula1:=maListe
-        .ShowDropDown = False
         .InCellDropdown = True
     End With
 
-    MsgBox "Liste déroulante créée sur B2:B1000 !"
-
-End Sub
-
-Private Sub Worksheet_Change(ByVal Target As Range)
-
-    ' === CONFIGURATION ===
-    Dim celluleCible As String
-    celluleCible = "B2"
-
-    Dim maListe() As String
-    maListe = Split("Paris,Lyon,Marseille,Bordeaux,Toulouse,Nantes,Strasbourg,Nice", ",")
-    ' ← Modifiez uniquement cette ligne pour changer vos éléments
-    ' =====================
-
-    Dim separateur As String
-    separateur = ", "
-
-    If Target.Address <> Range(celluleCible).Address Then Exit Sub
-
-    Application.EnableEvents = False
-
-    Dim nouvelleValeur As String
-    Dim valeurActuelle As String
-    Dim valeurFinale As String
-
-    nouvelleValeur = Target.Value
-    Application.Undo
-    valeurActuelle = Target.Value
-
-    If valeurActuelle = "" Then
-        valeurFinale = nouvelleValeur
-    ElseIf InStr(separateur & valeurActuelle & separateur, separateur & nouvelleValeur & separateur) > 0 Then
-        valeurFinale = valeurActuelle
-        valeurFinale = Replace(valeurFinale, nouvelleValeur & separateur, "")
-        valeurFinale = Replace(valeurFinale, separateur & nouvelleValeur, "")
-        valeurFinale = Replace(valeurFinale, nouvelleValeur, "")
-    Else
-        valeurFinale = valeurActuelle & separateur & nouvelleValeur
-    End If
-
-    Target.Value = valeurFinale
-    Application.EnableEvents = True
-
-End Sub
-
-Sub CreerListeDeroulante()
-
-    Dim ws As Worksheet
-    Set ws = ThisWorkbook.Sheets("Feuil1") ' ← Nom de votre feuille
-
-    With ws.Range("B2").Validation
-        .Delete
-        .Add Type:=xlValidateList, _
-             AlertStyle:=xlValidAlertStop, _
-             Formula1:="Paris,Lyon,Marseille,Bordeaux,Toulouse,Nantes,Strasbourg,Nice"
-             ' ← Mêmes éléments qu'au-dessus
-    End With
-
-    MsgBox "Liste déroulante créée !"
-
-End Sub
 
 
-
-Private Sub Workbook_NewSheet(ByVal Sh As Object)
-
-    Dim ws As Worksheet
-    Dim parts() As String
-    Dim trimestre As Integer, annee As Integer, semaine As Integer
-    Dim maxT As Integer, maxA As Integer, maxS As Integer
-    Dim tmpT As Integer, tmpA As Integer, tmpS As Integer
-
-    maxT = 1: maxA = 0: maxS = 0
-
-    ' Trouver la "dernière" logique feuille
-    For Each ws In ThisWorkbook.Worksheets
-
-        On Error Resume Next
-        parts = Split(ws.Name, "_")
-
-        If UBound(parts) = 2 Then
-            tmpT = Val(Replace(parts(0), "T", ""))
-            tmpA = Val(parts(1))
-            tmpS = Val(Replace(parts(2), "S", ""))
-
-            ' Comparaison logique (année > trimestre > semaine)
-            If tmpA > maxA _
-            Or (tmpA = maxA And tmpT > maxT) _
-            Or (tmpA = maxA And tmpT = maxT And tmpS > maxS) Then
-
-                maxA = tmpA
-                maxT = tmpT
-                maxS = tmpS
-
-            End If
-        End If
-
-        On Error GoTo 0
-    Next ws
-
-    trimestre = maxT
-    annee = maxA
-    semaine = maxS + 1
-
-    ' gestion semaine > 13
-    If semaine > 13 Then
-        semaine = 1
-        trimestre = trimestre + 1
-    End If
-
-    ' gestion trimestre > 4
-    If trimestre > 4 Then
-        trimestre = 1
-        annee = annee + 1
-    End If
-
-    Sh.Name = "T" & trimestre & "_" & annee & "_S" & semaine
-
-End Sub
-
-
-
-
-Private Sub Workbook_NewSheet(ByVal Sh As Object)
-
-    Dim lastName As String
-    Dim parts() As String
-    Dim trimestre As Integer
-    Dim annee As Integer
-    Dim semaine As Integer
-    
-    ' Récupère la feuille précédente
-    lastName = Sheets(Sheets.Count - 1).Name
-    
-    ' Découpe le nom (T1_2026_S1)
-    parts = Split(lastName, "_")
-    
-    trimestre = Replace(parts(0), "T", "")
-    annee = parts(1)
-    semaine = Replace(parts(2), "S", "")
-    
-    ' Incrément semaine
-    semaine = semaine + 1
-    
-    ' Si semaine > 13 → nouveau trimestre
-    If semaine > 13 Then
-        semaine = 1
-        trimestre = trimestre + 1
-    End If
-    
-    ' Si trimestre > 4 → nouvelle année
-    If trimestre > 4 Then
-        trimestre = 1
-        annee = annee + 1
-    End If
-    
-    ' Nouveau nom
-    Sh.Name = "T" & trimestre & "_" & annee & "_S" & semaine
 
 End Sub
