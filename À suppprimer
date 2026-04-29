@@ -1,4 +1,76 @@
+' ========================================
+' À coller dans le module de la feuille
+' ========================================
+Private Sub Worksheet_Change(ByVal Target As Range)
 
+    ' === CONFIGURATION ===
+    Dim plageCible As Range
+    Set plageCible = Range("B2:B1000")
+    Dim separateur As String
+    separateur = ", "
+    ' =====================
+
+    If Intersect(Target, plageCible) Is Nothing Then Exit Sub
+    If Target.Cells.Count > 1 Then Exit Sub
+    If Target.Value = "" Then Exit Sub
+
+    Application.EnableEvents = False
+    On Error GoTo Nettoyage
+
+    Dim nouvelleValeur As String
+    Dim valeurActuelle As String
+    Dim valeurFinale As String
+
+    nouvelleValeur = Target.Value
+    Application.Undo
+    valeurActuelle = Target.Value
+
+    If valeurActuelle = "" Then
+        valeurFinale = nouvelleValeur
+    ElseIf InStr(separateur & valeurActuelle & separateur, separateur & nouvelleValeur & separateur) > 0 Then
+        valeurFinale = valeurActuelle
+        valeurFinale = Replace(valeurFinale, nouvelleValeur & separateur, "")
+        valeurFinale = Replace(valeurFinale, separateur & nouvelleValeur, "")
+        valeurFinale = Replace(valeurFinale, nouvelleValeur, "")
+    Else
+        valeurFinale = valeurActuelle & separateur & nouvelleValeur
+    End If
+
+    Target.Value = valeurFinale
+
+Nettoyage:
+    Application.EnableEvents = True
+
+End Sub
+
+
+' ========================================
+' À coller dans un Module standard (Alt+F11 → Insertion → Module)
+' Lancer UNE SEULE FOIS via Alt+F8
+' ========================================
+Sub CreerListeDeroulante()
+
+    ' === VOTRE LISTE ICI ===
+    Dim maListe As String
+    maListe = "Paris,Lyon,Marseille,Bordeaux,Toulouse,Nantes,Strasbourg,Nice"
+    ' ← Modifiez uniquement cette ligne
+    ' =======================
+
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Sheets("Feuil1")  ' ← Nom de votre feuille
+
+    With ws.Range("B2:B1000").Validation
+        .Delete
+        .Add Type:=xlValidateList, _
+             AlertStyle:=xlValidAlertStop, _
+             Formula1:=maListe
+        .ShowDropDown = False
+        .InCellDropdown = True
+    End With
+
+    MsgBox "Liste déroulante créée sur B2:B1000 !"
+
+End Sub
 
 Private Sub Worksheet_Change(ByVal Target As Range)
 
