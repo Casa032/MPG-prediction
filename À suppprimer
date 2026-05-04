@@ -1,3 +1,52 @@
+Private Sub Worksheet_Change(ByVal Target As Range)
+
+    Dim cell As Range
+    Dim lignes() As String
+    Dim i As Integer
+    Dim texte As String
+    Dim datePart As String
+    Dim descPart As String
+
+    If Target.Count > 1 Then Exit Sub
+
+    Application.EnableEvents = False
+
+    Set cell = Target
+
+    lignes = Split(cell.Value, vbLf)
+
+    texte = ""
+
+    For i = LBound(lignes) To UBound(lignes)
+
+        If Trim(lignes(i)) <> "" Then
+
+            datePart = Split(lignes(i), " ")(0)
+            descPart = Mid(lignes(i), Len(datePart) + 2)
+
+            If IsDate(datePart) Then
+
+                texte = texte & Format(CDate(datePart), "dd/mm/yyyy") _
+                & " : " & Trim(descPart) & vbLf
+
+            End If
+
+        End If
+
+    Next i
+
+    If texte <> "" Then
+        cell.Value = Left(texte, Len(texte) - 1)
+    End If
+
+    cell.WrapText = True
+
+    Application.EnableEvents = True
+
+End Sub
+
+
+
 // dans la feuille 
 
 
