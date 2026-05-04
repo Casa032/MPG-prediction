@@ -1,3 +1,31 @@
+Private Function EstFormatValide(valeur As String) As Boolean
+    Dim parties() As String
+    Dim dateParts() As String
+    
+    If InStr(valeur, ":") = 0 Then Exit Function
+    parties = Split(valeur, ":", 2)
+    
+    ' Vérifie strictement dd/mm/yyyy avec Split
+    If InStr(parties(0), "/") = 0 Then Exit Function
+    dateParts = Split(Trim(parties(0)), "/")
+    
+    If UBound(dateParts) <> 2 Then Exit Function
+    If Len(dateParts(0)) <> 2 Then Exit Function
+    If Len(dateParts(1)) <> 2 Then Exit Function
+    If Len(dateParts(2)) <> 4 Then Exit Function
+    If Not IsNumeric(dateParts(0)) Then Exit Function
+    If Not IsNumeric(dateParts(1)) Then Exit Function
+    If Not IsNumeric(dateParts(2)) Then Exit Function
+    If CInt(dateParts(0)) < 1 Or CInt(dateParts(0)) > 31 Then Exit Function
+    If CInt(dateParts(1)) < 1 Or CInt(dateParts(1)) > 12 Then Exit Function
+    If Trim(parties(1)) = "" Then Exit Function
+    
+    EstFormatValide = True
+End Function
+
+
+
+
 If Not Intersect(Target, Range("M:M")) Is Nothing Then
     If Target.Cells.Count = 1 And Target.Value <> "" Then
         Application.EnableEvents = False
