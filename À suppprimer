@@ -1,54 +1,71 @@
+
 Private Sub Worksheet_Change(ByVal Target As Range)
-
-    Dim cell As Range
-    Dim lignes() As String
-    Dim i As Integer
-    Dim texte As String
-    Dim datePart As String
-    Dim descPart As String
-
-    If Target.Count > 1 Then Exit Sub
-
+   
+    Dim plageCible As Range
+    Set plageCible = Range("H2:H1000")
+    Dim separateur As String
+    separateur = ", "
+    
+    If Intersect(Target, plageCible) Is Nothing Then Exit Sub
+    If Target.Cells.Count > 1 Then Exit Sub
+    If Target.Value = "" Then Exit Sub
+    
     Application.EnableEvents = False
-
-    Set cell = Target
-
-    lignes = Split(cell.Value, vbLf)
-
-    texte = ""
-
-    For i = LBound(lignes) To UBound(lignes)
-
-        If Trim(lignes(i)) <> "" Then
-
-            datePart = Split(lignes(i), " ")(0)
-            descPart = Mid(lignes(i), Len(datePart) + 2)
-
-            If IsDate(datePart) Then
-
-                texte = texte & Format(CDate(datePart), "dd/mm/yyyy") _
-                & " : " & Trim(descPart) & vbLf
-
-            End If
-
-        End If
-
-    Next i
-
-    If texte <> "" Then
-        cell.Value = Left(texte, Len(texte) - 1)
+    On Error GoTo Nettoyage
+    
+    Dim nouvelleValeur As String
+    Dim valeurActuelle As String
+    Dim valeurFinale As String
+    
+    nouvelleValeur = Trim(Target.Value)
+    Application.Undo
+    valeurActuelle = Target.Value
+    
+    ' Validation format : dd/mm/yyyy: Description
+    If Not EstFormatValide(nouvelleValeur) Then
+        MsgBox "Format invalide. Attendu : dd/mm/yyyy: Description" & Chr(10) & _
+               "Exemple : 07/06/2026: Harmonisation", vbExclamation
+        GoTo Nettoyage
     End If
+    
+    ' Normalise la date
+    Dim parties() As String
+    parties = Split(nouvelleValeur, ": ", 2)
+    nouvelleValeur = Format(CDate(parties(0)), "dd/mm/yyyy") & ": " & Trim(parties(1))
+    
+    If valeurActuelle = "" Then
+        valeurFinale = nouvelleValeur
+    ElseIf InStr(separateur & valeurActuelle & separateur, separateur & nouvelleValeur & separateur) > 0 Then
+        valeurFinale = valeurActuelle
+        valeurFinale = Replace(valeurFinale, nouvelleValeur & separateur, "")
+        valeurFinale = Replace(valeurFinale, separateur & nouvelleValeur, "")
+        valeurFinale = Replace(valeurFinale, nouvelleValeur, "")
+    Else
+        valeurFinale = valeurActuelle & separateur & nouvelleValeur
+    End If
+    
+    Target.Value = valeurFinale
 
-    cell.WrapText = True
-
+Nettoyage:
     Application.EnableEvents = True
-
 End Sub
 
-
-
-// dans la feuille 
-
+Private Function EstFormatValide(valeur As String) As Boolean
+    Dim parties() As String
+    
+    ' Doit contenir ": "
+    If InStr(valeur, ": ") = 0 Then Exit Function
+    
+    parties = Split(valeur, ": ", 2)
+    
+    ' La partie date doit être valide
+    If Not IsDate(parties(0)) Then Exit Function
+    
+    ' La description ne doit pas être vide
+    If Trim(parties(1)) = "" Then Exit Function
+    
+    EstFormatValide = True
+End Function
 
 Private Sub Worksheet_Change(ByVal Target As Range)
 
