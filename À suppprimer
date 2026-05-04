@@ -1,5 +1,121 @@
 Private Sub Worksheet_Change(ByVal Target As Range)
 
+    Dim separateur As String
+    Dim nouvelleValeurH As String
+    Dim valeurActuelleH As String
+    Dim valeurFinaleH As String
+    Dim nouvelleValeurM As String
+    Dim valeurActuelleM As String
+    Dim valeurFinaleM As String
+    Dim dateTexte As String
+    Dim description As String
+    Dim posColon As Integer
+
+    separateur = ", "
+    On Error GoTo Nettoyage
+    Application.EnableEvents = False
+
+    ' =========================
+    ' COLONNE H : liste sans doublon
+    ' =========================
+    If Not Intersect(Target, Range("H:H")) Is Nothing Then
+        If Target.Cells.Count = 1 And Target.Value <> "" Then
+            nouvelleValeurH = Trim(Target.Value)
+            Application.Undo
+            valeurActuelleH = Target.Value
+            If valeurActuelleH = "" Then
+                valeurFinaleH = nouvelleValeurH
+            ElseIf InStr(1, separateur & valeurActuelleH & separateur, separateur & nouvelleValeurH & separateur, vbTextCompare) > 0 Then
+                valeurFinaleH = Replace(valeurActuelleH, separateur & nouvelleValeurH, "")
+                valeurFinaleH = Replace(valeurFinaleH, nouvelleValeurH & separateur, "")
+                valeurFinaleH = Replace(valeurFinaleH, nouvelleValeurH, "")
+            Else
+                valeurFinaleH = valeurActuelleH & separateur & nouvelleValeurH
+            End If
+            Target.Value = valeurFinaleH
+        End If
+    End If
+
+    ' =========================
+    ' COLONNE M : date + description (format texte imposé)
+    ' =========================
+    If Not Intersect(Target, Range("M:M")) Is Nothing Then
+        If Target.Cells.Count = 1 Then
+
+            ' Récupère la valeur brute (fonctionne car la colonne est en format @)
+            nouvelleValeurM = Trim(CStr(Target.Value))
+
+            ' Cellule vidée volontairement → on laisse passer
+            If nouvelleValeurM = "" Then GoTo Nettoyage
+
+            ' Vérifie présence de ":"
+            posColon = InStr(nouvelleValeurM, ":")
+            If posColon = 0 Then
+                MsgBox "Format invalide." & Chr(10) & "Attendu : jj/mm/aaaa: description", vbExclamation, "Erreur"
+                Target.Value = ""
+                GoTo Nettoyage
+            End If
+
+            dateTexte = Trim(Left(nouvelleValeurM, posColon - 1))
+            description = Trim(Mid(nouvelleValeurM, posColon + 1))
+
+            ' Validation date
+            If Not dateTexte Like "##/##/####" Then
+                MsgBox "Format de date invalide." & Chr(10) & "Attendu : jj/mm/aaaa: description", vbExclamation, "Erreur"
+                Target.Value = ""
+                GoTo Nettoyage
+            End If
+            If Not IsDate(dateTexte) Then
+                MsgBox "Date inexistante : " & dateTexte, vbExclamation, "Erreur"
+                Target.Value = ""
+                GoTo Nettoyage
+            End If
+            If description = "" Then
+                MsgBox "La description ne peut pas être vide.", vbExclamation, "Erreur"
+                Target.Value = ""
+                GoTo Nettoyage
+            End If
+
+            ' Entrée normalisée
+            nouvelleValeurM = Format(CDate(dateTexte), "dd/mm/yyyy") & ": " & description
+
+            ' Lecture valeur existante AVANT modification
+            ' (on a déjà la nouvelle valeur, pas besoin d'Undo)
+            ' On cherche si une entrée identique existe déjà → toggle
+            valeurActuelleM = ""
+            ' Récupère ce qui était dans la cellule avant la frappe via Undo temporaire
+            Application.Undo
+            valeurActuelleM = Trim(CStr(Target.Value))
+            ' Réécrit directement sans repasser par Undo
+            Target.NumberFormat = "@"
+
+            If valeurActuelleM = "" Then
+                valeurFinaleM = nouvelleValeurM
+            ElseIf InStr(1, separateur & valeurActuelleM & separateur, _
+                         separateur & nouvelleValeurM & separateur, vbTextCompare) > 0 Then
+                ' Suppression (toggle)
+                valeurFinaleM = Replace(valeurActuelleM, separateur & nouvelleValeurM, "")
+                valeurFinaleM = Replace(valeurFinaleM, nouvelleValeurM & separateur, "")
+                valeurFinaleM = Replace(valeurFinaleM, nouvelleValeurM, "")
+                valeurFinaleM = Trim(valeurFinaleM)
+            Else
+                valeurFinaleM = valeurActuelleM & separateur & nouvelleValeurM
+            End If
+
+            Target.Value = valeurFinaleM
+        End If
+    End If
+
+Nettoyage:
+    Application.EnableEvents = True
+End Sub
+
+
+
+
+
+Private Sub Worksheet_Change(ByVal Target As Range)
+
     ' === Déclarations groupées en haut ===
     Dim separateur As String
     Dim nouvelleValeurH As String
