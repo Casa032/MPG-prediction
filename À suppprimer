@@ -1,3 +1,106 @@
+
+Private Sub Worksheet_Change(ByVal Target As Range)
+
+    Dim separateur As String
+    separateur = ", "
+
+    On Error GoTo Nettoyage
+    Application.EnableEvents = False
+
+    ' =========================
+    ' COLONNE H : liste sans doublon
+    ' =========================
+    If Not Intersect(Target, Range("H:H")) Is Nothing Then
+
+        If Target.Cells.Count = 1 And Target.Value <> "" Then
+
+            Dim nouvelleValeurH As String
+            Dim valeurActuelleH As String
+            Dim valeurFinaleH As String
+
+            nouvelleValeurH = Trim(Target.Value)
+            Application.Undo
+            valeurActuelleH = Target.Value
+
+            If valeurActuelleH = "" Then
+                valeurFinaleH = nouvelleValeurH
+
+            ElseIf InStr(1, separateur & valeurActuelleH & separateur, separateur & nouvelleValeurH & separateur, vbTextCompare) > 0 Then
+
+                valeurFinaleH = Replace(valeurActuelleH, separateur & nouvelleValeurH, "")
+                valeurFinaleH = Replace(valeurFinaleH, nouvelleValeurH & separateur, "")
+                valeurFinaleH = Replace(valeurFinaleH, nouvelleValeurH, "")
+
+            Else
+                valeurFinaleH = valeurActuelleH & separateur & nouvelleValeurH
+            End If
+
+            Target.Value = valeurFinaleH
+
+        End If
+    End If
+
+    ' =========================
+    ' COLONNE M : date + description
+    ' =========================
+    If Not Intersect(Target, Range("M:M")) Is Nothing Then
+
+        If Target.Cells.Count = 1 And Target.Value <> "" Then
+
+            Dim nouvelleValeurM As String
+            Dim valeurActuelleM As String
+            Dim valeurFinaleM As String
+            Dim parties() As String
+            Dim dateTexte As String
+            Dim description As String
+
+            nouvelleValeurM = Trim(Target.Value)
+
+            Application.Undo
+            valeurActuelleM = Target.Value
+
+            ' Vérifie présence ":"
+            If InStr(nouvelleValeurM, ":") = 0 Then GoTo Nettoyage
+
+            parties = Split(nouvelleValeurM, ":", 2)
+
+            dateTexte = Trim(parties(0))
+            description = Trim(parties(1))
+
+            ' Validation stricte format date
+            If Not dateTexte Like "##/##/####" Then GoTo Nettoyage
+            If Not IsDate(dateTexte) Then GoTo Nettoyage
+            If description = "" Then GoTo Nettoyage
+
+            ' Normalisation
+            nouvelleValeurM = Format(CDate(dateTexte), "dd/mm/yyyy") & ": " & description
+
+            ' Ajout / suppression doublon
+            If valeurActuelleM = "" Then
+                valeurFinaleM = nouvelleValeurM
+
+            ElseIf InStr(1, separateur & valeurActuelleM & separateur, separateur & nouvelleValeurM & separateur, vbTextCompare) > 0 Then
+
+                valeurFinaleM = Replace(valeurActuelleM, separateur & nouvelleValeurM, "")
+                valeurFinaleM = Replace(valeurFinaleM, nouvelleValeurM & separateur, "")
+                valeurFinaleM = Replace(valeurFinaleM, nouvelleValeurM, "")
+
+            Else
+                valeurFinaleM = valeurActuelleM & separateur & nouvelleValeurM
+            End If
+
+            Target.Value = valeurFinaleM
+
+        End If
+    End If
+
+Nettoyage:
+    Application.EnableEvents = True
+
+End Sub
+
+///////
+
 Private Function EstFormatValide(valeur As String) As Boolean
     Dim parties() As String
     Dim dateParts() As String
