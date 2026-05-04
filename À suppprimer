@@ -1,3 +1,93 @@
+Private Sub Worksheet_Change(ByVal Target As Range)
+
+    Dim separateur As String
+    Dim lignes() As String
+    Dim ligne As String
+    Dim i As Integer
+    Dim posColon As Integer
+    Dim dateTexte As String
+    Dim description As String
+    Dim valeur As String
+
+    On Error GoTo Nettoyage
+    Application.EnableEvents = False
+
+    ' =========================
+    ' COLONNE H : liste sans doublon
+    ' =========================
+    If Not Intersect(Target, Range("H:H")) Is Nothing Then
+        If Target.Cells.Count = 1 And Target.Value <> "" Then
+            Dim nouvelleValeurH As String
+            Dim valeurActuelleH As String
+            Dim valeurFinaleH As String
+            separateur = ", "
+            nouvelleValeurH = Trim(Target.Value)
+            Application.Undo
+            valeurActuelleH = Target.Value
+            If valeurActuelleH = "" Then
+                valeurFinaleH = nouvelleValeurH
+            ElseIf InStr(1, separateur & valeurActuelleH & separateur, separateur & nouvelleValeurH & separateur, vbTextCompare) > 0 Then
+                valeurFinaleH = Replace(valeurActuelleH, separateur & nouvelleValeurH, "")
+                valeurFinaleH = Replace(valeurFinaleH, nouvelleValeurH & separateur, "")
+                valeurFinaleH = Replace(valeurFinaleH, nouvelleValeurH, "")
+            Else
+                valeurFinaleH = valeurActuelleH & separateur & nouvelleValeurH
+            End If
+            Target.Value = valeurFinaleH
+        End If
+    End If
+
+    ' =========================
+    ' COLONNE M : validation format date uniquement
+    ' =========================
+    If Not Intersect(Target, Range("M:M")) Is Nothing Then
+        If Target.Cells.Count = 1 And Target.Value <> "" Then
+
+            valeur = Trim(CStr(Target.Value))
+
+            ' Découpe sur ", " pour traiter chaque entrée
+            lignes = Split(valeur, ",")
+
+            For i = 0 To UBound(lignes)
+                ligne = Trim(lignes(i))
+
+                posColon = InStr(ligne, ":")
+                If posColon = 0 Then
+                    MsgBox "Format invalide : """ & ligne & """" & Chr(10) & "Attendu : jj/mm/aaaa: description", vbExclamation, "Erreur"
+                    Target.Value = ""
+                    GoTo Nettoyage
+                End If
+
+                dateTexte = Trim(Left(ligne, posColon - 1))
+                description = Trim(Mid(ligne, posColon + 1))
+
+                If Not dateTexte Like "##/##/####" Then
+                    MsgBox "Format de date invalide : """ & dateTexte & """" & Chr(10) & "Attendu : jj/mm/aaaa", vbExclamation, "Erreur"
+                    Target.Value = ""
+                    GoTo Nettoyage
+                End If
+
+                If Not IsDate(dateTexte) Then
+                    MsgBox "Date inexistante : """ & dateTexte & """", vbExclamation, "Erreur"
+                    Target.Value = ""
+                    GoTo Nettoyage
+                End If
+
+                If description = "" Then
+                    MsgBox "Description vide pour : """ & dateTexte & """", vbExclamation, "Erreur"
+                    Target.Value = ""
+                    GoTo Nettoyage
+                End If
+
+            Next i
+
+        End If
+    End If
+
+Nettoyage:
+    Application.EnableEvents = True
+End Sub
+
 '
 =========================
     ' COLONNE M : date + description (format texte imposé)
