@@ -1,5 +1,112 @@
 
 Private Sub Worksheet_Change(ByVal Target As Range)
+    Dim separateur As String
+    separateur = ", "
+    On Error GoTo Nettoyage
+    Application.EnableEvents = False
+
+    ' =========================
+    ' COLONNE H : liste sans doublon
+    ' =========================
+    If Not Intersect(Target, Range("H:H")) Is Nothing Then
+        If Target.Cells.Count = 1 And Target.Value <> "" Then
+            Dim nouvelleValeurH As String
+            Dim valeurActuelleH As String
+            Dim valeurFinaleH As String
+            nouvelleValeurH = Trim(Target.Value)
+            Application.Undo
+            valeurActuelleH = Target.Value
+            If valeurActuelleH = "" Then
+                valeurFinaleH = nouvelleValeurH
+            ElseIf InStr(1, separateur & valeurActuelleH & separateur, separateur & nouvelleValeurH & separateur, vbTextCompare) > 0 Then
+                valeurFinaleM = Replace(valeurActuelleH, separateur & nouvelleValeurH, "")
+                valeurFinaleH = Replace(valeurFinaleH, nouvelleValeurH & separateur, "")
+                valeurFinaleH = Replace(valeurFinaleH, nouvelleValeurH, "")
+            Else
+                valeurFinaleH = valeurActuelleH & separateur & nouvelleValeurH
+            End If
+            Target.Value = valeurFinaleH
+        End If
+    End If
+
+    ' =========================
+    ' COLONNE M : date + description
+    ' =========================
+    If Not Intersect(Target, Range("M:M")) Is Nothing Then
+        If Target.Cells.Count = 1 And Target.Value <> "" Then
+            Dim nouvelleValeurM As String
+            Dim valeurActuelleM As String
+            Dim valeurFinaleM As String
+            Dim parties() As String
+            Dim dateTexte As String
+            Dim description As String
+            Dim posColon As Integer
+
+            ' *** FIX : forcer la cellule en texte AVANT de lire la valeur ***
+            ' On récupère le texte brut affiché (avant conversion Excel)
+            nouvelleValeurM = Trim(Target.Text)
+
+            ' Si Excel a déjà converti en date, Target.Text ressemble à "01/05/2025"
+            ' On tente alors de reconstruire depuis Target.Value (numérique)
+            If InStr(nouvelleValeurM, ":") = 0 Then
+                ' Excel a avalé la partie après ":" en croyant à une heure
+                ' => On ne peut pas récupérer la description, on annule
+                Application.Undo
+                MsgBox "Format invalide. Saisissez : jj/mm/aaaa: description" & Chr(10) & _
+                       "Astuce : précédez la saisie d'une apostrophe pour forcer le texte.", _
+                       vbExclamation, "Format incorrect"
+                GoTo Nettoyage
+            End If
+
+            Application.Undo
+            valeurActuelleM = Target.Value
+
+            ' Découpage sur le premier ":"
+            posColon = InStr(nouvelleValeurM, ":")
+            dateTexte = Trim(Left(nouvelleValeurM, posColon - 1))
+            description = Trim(Mid(nouvelleValeurM, posColon + 1))
+
+            ' Validation format date strict
+            If Not dateTexte Like "##/##/####" Then
+                MsgBox "Format de date invalide. Attendu : jj/mm/aaaa", vbExclamation, "Erreur"
+                GoTo Nettoyage
+            End If
+            If Not IsDate(dateTexte) Then
+                MsgBox "Date inexistante : " & dateTexte, vbExclamation, "Erreur"
+                GoTo Nettoyage
+            End If
+            If description = "" Then
+                MsgBox "La description ne peut pas être vide.", vbExclamation, "Erreur"
+                GoTo Nettoyage
+            End If
+
+            ' Normalisation finale
+            nouvelleValeurM = Format(CDate(dateTexte), "dd/mm/yyyy") & ": " & description
+
+            ' Ajout ou suppression (toggle doublon)
+            If valeurActuelleM = "" Then
+                valeurFinaleM = nouvelleValeurM
+            ElseIf InStr(1, separateur & valeurActuelleM & separateur, _
+                         separateur & nouvelleValeurM & separateur, vbTextCompare) > 0 Then
+                valeurFinaleM = Replace(valeurActuelleM, separateur & nouvelleValeurM, "")
+                valeurFinaleM = Replace(valeurFinaleM, nouvelleValeurM & separateur, "")
+                valeurFinaleM = Replace(valeurFinaleM, nouvelleValeurM, "")
+            Else
+                valeurFinaleM = valeurActuelleM & separateur & nouvelleValeurM
+            End If
+
+            ' *** Écriture en texte pur pour éviter toute reconversion ***
+            Target.NumberFormat = "@"
+            Target.Value = valeurFinaleM
+        End If
+    End If
+
+Nettoyage:
+    Application.EnableEvents = True
+End Sub
+
+
+Private Sub Worksheet_Change(ByVal Target As Range)
 
     Dim separateur As String
     separateur = ", "
