@@ -1,3 +1,46 @@
+If Not Intersect(Target, Range("M:M")) Is Nothing Then
+    If Target.Cells.Count = 1 And Target.Value <> "" Then
+        Application.EnableEvents = False
+        On Error GoTo Nettoyage
+        
+        Dim saisie As String
+        saisie = Trim(Target.Value)
+        
+        Dim entrees() As String
+        Dim entree As String
+        Dim parties() As String
+        Dim valeurFinaleM As String
+        
+        entrees = Split(saisie, separateur)
+        valeurFinaleM = ""
+        
+        Dim i As Integer
+        For i = 0 To UBound(entrees)
+            entree = Trim(entrees(i))
+            
+            If Not EstFormatValide(entree) Then
+                MsgBox "Format invalide : " & entree & Chr(10) & _
+                       "Attendu : dd/mm/yyyy: Description", vbExclamation
+                Application.Undo
+                GoTo Nettoyage
+            End If
+            
+            parties = Split(entree, ": ", 2)
+            entree = Format(CDate(parties(0)), "dd/mm/yyyy") & ": " & Trim(parties(1))
+            
+            If valeurFinaleM = "" Then
+                valeurFinaleM = entree
+            Else
+                valeurFinaleM = valeurFinaleM & separateur & entree
+            End If
+        Next i
+        
+        Target.Value = valeurFinaleM
+    End If
+End If
+
+
+
 
 Private Sub Worksheet_Change(ByVal Target As Range)
    
