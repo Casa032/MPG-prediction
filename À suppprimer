@@ -1,3 +1,65 @@
+
+' =========================
+    ' COLONNE M : date + description
+    ' =========================
+    If Not Intersect(Target, Range("M:M")) Is Nothing Then
+        If Target.Cells.Count = 1 And Target.Value <> "" Then
+
+            Dim nouvelleValeurM As String
+            Dim valeurActuelleM As String
+            Dim valeurFinaleM As String
+            Dim entrees() As String
+            Dim entree As String
+            Dim i As Integer
+            Dim posColon As Integer
+            Dim dateTexte As String
+            Dim description As String
+
+            nouvelleValeurM = Trim(CStr(Target.Value))
+            Application.Undo
+            valeurActuelleM = Trim(CStr(Target.Value))
+
+            ' Découpe chaque entrée séparée par ", "
+            entrees = Split(nouvelleValeurM, ",")
+
+            For i = 0 To UBound(entrees)
+                entree = Trim(entrees(i))
+
+                posColon = InStr(entree, ":")
+                If posColon = 0 Then
+                    MsgBox "Format invalide : """ & entree & """" & Chr(10) & "Attendu : jj/mm/aaaa: description", vbExclamation, "Erreur"
+                    GoTo Nettoyage
+                End If
+
+                dateTexte = Trim(Left(entree, posColon - 1))
+                description = Trim(Mid(entree, posColon + 1))
+
+                If Not dateTexte Like "##/##/####" Then
+                    MsgBox "Format de date invalide : """ & dateTexte & """" & Chr(10) & "Attendu : jj/mm/aaaa", vbExclamation, "Erreur"
+                    GoTo Nettoyage
+                End If
+
+                If Not IsDate(dateTexte) Then
+                    MsgBox "Date inexistante : """ & dateTexte & """", vbExclamation, "Erreur"
+                    GoTo Nettoyage
+                End If
+
+                If description = "" Then
+                    MsgBox "Description vide pour : """ & dateTexte & """", vbExclamation, "Erreur"
+                    GoTo Nettoyage
+                End If
+
+            Next i
+
+            ' Toutes les entrées sont valides, on écrit
+            Target.NumberFormat = "@"
+            Target.Value = nouvelleValeurM
+
+        End If
+    End If
+
+
+
 ' =========================
     ' COLONNE M : date + description
     ' =========================
