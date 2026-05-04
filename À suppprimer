@@ -1,4 +1,5 @@
-' =========================
+'
+=========================
     ' COLONNE M : date + description (format texte imposé)
     ' =========================
     If Not Intersect(Target, Range("M:M")) Is Nothing Then
