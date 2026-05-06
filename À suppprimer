@@ -1,4 +1,17 @@
 
+NORMALISE_TYPE = {
+    "VIE D'ENTREPRISE": "VIE_ENTREPRISE",
+    "VIE D'ENTREPRISE": "VIE_ENTREPRISE",  # apostrophe typographique
+    "VIE DENTREPRISE":  "VIE_ENTREPRISE",
+}
+df["type"] = df["type"].apply(
+    lambda v: NORMALISE_TYPE.get(str(v).strip().upper(), str(v).strip().upper())
+    if pd.notna(v) else "AUTRE"
+)
+df["type"] = df["type"].apply(
+    lambda v: v if v in TYPES_AGENDA_VALIDES else "AUTRE"
+)
+
 ' =========================
     ' COLONNE M : date + description
     ' =========================
